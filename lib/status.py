@@ -105,6 +105,13 @@ class StatusMonitor(TrafficStats, logging.Handler):
         if record.levelno >= logging.ERROR:
             self.num_errors += 1
 
+    def display_once(self) -> None:
+        print(self.banner, flush=True)
+
+    async def idle_forever(self) -> None:
+        while True:
+            await asyncio.sleep(3600)
+
     async def render_forever(self) -> None:
         while True:
             await asyncio.sleep(self.interval)

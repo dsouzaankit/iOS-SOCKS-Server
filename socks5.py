@@ -4,8 +4,11 @@
 
 import ipaddress
 import logging
+import os
 import socket
+import sys
 import threading
+import traceback
 
 from lib.socks5_server import AsyncSocks5Handler
 from lib.http_proxy_server import AsyncHTTPProxyHandler
@@ -17,8 +20,10 @@ logging.basicConfig(level=logging.ERROR)
 # IP over which the proxy will be available (probably WiFi IP)
 PROXY_HOST = "172.20.10.1"
 # IP over which the proxy will attempt to connect to the Internet
-CONNECT_HOST_IPV4 = "0.0.0.0"
+CONNECT_HOST_IPV4 = None
 CONNECT_HOST_IPV6 = None
+PREFER_SYSTEM_DNS = "Pythonista" in sys.executable
+SKIP_IPV6_CONNECTIVITY_TEST = "Pythonista" in sys.executable
 # Time out connections after being idle for this long (in seconds)
 IDLE_TIMEOUT = 1800
 
@@ -30,14 +35,30 @@ WPAD_PORT = 8088
 USE_PHONE_VPN = True
 CUSTOM_RESOLVERS = []
 
-# Try to keep the screen from turning off (iOS)
-try:
-    import console
-    from objc_util import on_main_thread
+# File logging + LAN debug server.
+LOG_TO_FILE = True
+LAN_DEBUG_ENABLED = True
+LAN_DEBUG_PORT = 8765
+FILE_LOG_LEVEL = logging.INFO
+# False = print startup banner once; no console redraw or error log lines.
+LIVE_CONSOLE_REFRESH = False
 
-    on_main_thread(console.set_idle_timer_disabled)(True)
-except ImportError:
-    pass
+# Pythonista: dark UI + prevent auto-lock while the script runs.
+REQUEST_DARK_MODE = True
+KEEP_SCREEN_AWAKE = True
+# Write "Run SOCKS Proxy.py" beside this folder for the Shortcuts script picker.
+INSTALL_SHORTCUT_LAUNCHER = True
+
+if "Pythonista" in sys.executable:
+    try:
+        from lib.ios_ui import keep_screen_awake, request_dark_mode
+
+        if REQUEST_DARK_MODE:
+            request_dark_mode()
+        if KEEP_SCREEN_AWAKE:
+            keep_screen_awake(True)
+    except Exception:
+        pass
 
 
 def is_globally_routable(ipv6_address):
@@ -197,25 +218,28 @@ try:
                 iface_ipv6.name,
                 iface_ipv6.addr.address,
             )
-            # Test IPv6 connectivity
-            try:
-                test_socket = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-                test_socket.settimeout(5)
-                test_socket.bind((iface_ipv6.addr.address, 0))
-                test_socket.connect(("2606:4700:4700::1111", 80))
-                test_socket.close()
+            if SKIP_IPV6_CONNECTIVITY_TEST:
                 CONNECT_HOST_IPV6 = iface_ipv6.addr.address
-            except Exception as e:
-                ipv6_output += (
-                    "Failed to connect to 2606:4700:4700::1111 over IPv6 due to: %s\n"
-                    % str(e)
-                )
-                CONNECT_HOST_IPV6 = None
-            finally:
-                test_socket.close()
+                ipv6_output += "Skipping IPv6 connectivity test (Pythonista)\n"
+            else:
+                test_socket = None
+                try:
+                    test_socket = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+                    test_socket.settimeout(5)
+                    test_socket.bind((iface_ipv6.addr.address, 0))
+                    test_socket.connect(("2606:4700:4700::1111", 80))
+                    CONNECT_HOST_IPV6 = iface_ipv6.addr.address
+                except Exception as e:
+                    ipv6_output += (
+                        "Failed to connect to 2606:4700:4700::1111 over IPv6 due to: %s\n"
+                        % str(e)
+                    )
+                    CONNECT_HOST_IPV6 = None
+                finally:
+                    if test_socket is not None:
+                        test_socket.close()
 
     initial_output += ipv4_output + ipv6_output
-    print(initial_output)
 except Exception as e:
     logging.error("Address detection failed: %s: %s", (type(e).__name__, e))
     import traceback
@@ -225,44 +249,32 @@ except Exception as e:
     interfaces = None
 
 
-def create_wpad_server(hhost, hport, phost, pport):
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+def _setup_logging() -> None:
+    if not LOG_TO_FILE:
+        return
+    from lib.file_logging import install_crash_hooks, setup_file_logging
+    from lib.log_paths import write_ok_probe
 
-    class HTTPHandler(BaseHTTPRequestHandler):
-        def do_HEAD(s):
-            s.send_response(200)
-            s.send_header("Content-type", "application/x-ns-proxy-autoconfig")
-            s.end_headers()
+    setup_file_logging(level=FILE_LOG_LEVEL)
+    install_crash_hooks()
+    write_ok_probe(mode="full")
 
-        def do_GET(s):
-            s.send_response(200)
-            s.send_header("Content-type", "application/x-ns-proxy-autoconfig")
-            s.end_headers()
-            s.wfile.write(
-                (
-                    """
-function FindProxyForURL(url, host)
-{
-   if (isInNet(host, "192.168.0.0", "255.255.0.0")) {
-      return "DIRECT";
-   } else if (isInNet(host, "172.16.0.0", "255.240.0.0")) {
-      return "DIRECT";
-   } else if (isInNet(host, "10.0.0.0", "255.0.0.0")) {
-      return "DIRECT";
-   } else {
-      return "SOCKS5 %s:%d; SOCKS %s:%d";
-   }
-}
-"""
-                    % (phost, pport, phost, pport)
-                )
-                .lstrip()
-                .encode()
-            )
 
-    HTTPServer.allow_reuse_address = True
-    server = HTTPServer((hhost, hport), HTTPHandler)
-    return server
+def _configure_console_logging(stats: StatusMonitor) -> None:
+    """Attach stats handler; drop stderr logging when the console UI is quiet."""
+    root = logging.getLogger()
+    root.addHandler(stats)
+    if LIVE_CONSOLE_REFRESH:
+        return
+    for handler in list(root.handlers):
+        if isinstance(handler, logging.StreamHandler):
+            root.removeHandler(handler)
+
+
+def create_wpad_server(hhost, hport, phost, socks_port, http_port):
+    from lib.wpad import create_wpad_server as _create
+
+    return _create(hhost, hport, phost, socks_port, http_port)
 
 
 def run_wpad_server(server):
@@ -275,7 +287,35 @@ def run_wpad_server(server):
 if __name__ == "__main__":
     import asyncio
 
-    wpad_server = create_wpad_server(LISTEN_HOST, WPAD_PORT, PROXY_HOST, SOCKS_PORT)
+    if "--safe" in sys.argv:
+        from debug_server import run_safe_mode
+
+        port = LAN_DEBUG_PORT
+        for i, arg in enumerate(sys.argv):
+            if arg in ("--port", "-p") and i + 1 < len(sys.argv):
+                port = int(sys.argv[i + 1])
+                break
+        run_safe_mode(port)
+        sys.exit(0)
+
+    from lib.wpad import make_pac_bytes
+
+    _setup_logging()
+
+    if INSTALL_SHORTCUT_LAUNCHER and "Pythonista" in sys.executable:
+        from lib.shortcut_launcher import (
+            install_shortcuts_launcher,
+            launcher_banner_lines,
+        )
+
+        _proxy_dir = os.path.dirname(os.path.abspath(__file__))
+        launcher_result = install_shortcuts_launcher(_proxy_dir, quiet=True)
+        initial_output += launcher_banner_lines(launcher_result, _proxy_dir)
+
+    pac_body = make_pac_bytes(PROXY_HOST, HTTP_PORT, SOCKS_PORT)
+    wpad_server = create_wpad_server(
+        LISTEN_HOST, WPAD_PORT, PROXY_HOST, SOCKS_PORT, HTTP_PORT
+    )
 
     initial_output += "PAC URL: http://{}:{}/wpad.dat\n".format(PROXY_HOST, WPAD_PORT)
     initial_output += "SOCKS Address: {}:{}\n".format(
@@ -284,14 +324,47 @@ if __name__ == "__main__":
     initial_output += "HTTP Proxy Address: {}:{}\n".format(
         PROXY_HOST or LISTEN_HOST, HTTP_PORT
     )
+    if "Pythonista" in sys.executable:
+        initial_output += (
+            "Keep Pythonista in the foreground — do not lock the phone or switch apps.\n"
+        )
+    if LAN_DEBUG_ENABLED:
+        initial_output += "Debug log LAN: http://{}:{}/\n".format(
+            PROXY_HOST or LISTEN_HOST, LAN_DEBUG_PORT
+        )
+        initial_output += "  safe mode: python debug_server.py\n"
+
+    if LOG_TO_FILE:
+        from lib.file_logging import log_banner
+
+        log_banner(initial_output)
+
     stats = StatusMonitor(initial_output)
-    logging.getLogger().addHandler(stats)
+    _configure_console_logging(stats)
 
     thread = threading.Thread(target=run_wpad_server, args=(wpad_server,))
     thread.daemon = True
     thread.start()
 
     async def main():
+        if LAN_DEBUG_ENABLED:
+            from lib.lan_debug_server import start_lan_debug_server_thread
+
+            def _lan_debug_status() -> dict:
+                return {
+                    "connections": stats.num_connections,
+                    "errors": stats.num_errors,
+                    "socksPort": SOCKS_PORT,
+                    "httpPort": HTTP_PORT,
+                }
+
+            start_lan_debug_server_thread(
+                LISTEN_HOST,
+                LAN_DEBUG_PORT,
+                safe_mode=False,
+                status_fn=_lan_debug_status,
+            )
+
         server = AsyncProxyServer(
             AsyncSocks5Handler,
             listen_hosts=LISTEN_HOST,
@@ -300,6 +373,9 @@ if __name__ == "__main__":
             resolver=resolver,
             connect_host_ipv4=CONNECT_HOST_IPV4,
             connect_host_ipv6=CONNECT_HOST_IPV6,
+            prefer_system_dns=PREFER_SYSTEM_DNS,
+            http_port=HTTP_PORT,
+            pac_body=pac_body,
         )
         asyncio.create_task(server.run())
 
@@ -311,13 +387,29 @@ if __name__ == "__main__":
             resolver=resolver,
             connect_host_ipv4=CONNECT_HOST_IPV4,
             connect_host_ipv6=CONNECT_HOST_IPV6,
+            prefer_system_dns=PREFER_SYSTEM_DNS,
+            access_log=LIVE_CONSOLE_REFRESH,
+            pac_body=pac_body,
         )
         asyncio.create_task(server.run())
 
-        await stats.render_forever()
+        if LIVE_CONSOLE_REFRESH:
+            await stats.render_forever()
+        else:
+            stats.display_once()
+            await stats.idle_forever()
 
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Shutting down.")
+        # Pythonista Stop can take up to ~30s while connections close; wait for this line.
+        print("Shutting down.", flush=True)
         wpad_server.shutdown()
+    except Exception as exc:
+        print("Proxy crashed:", exc, flush=True)
+        traceback.print_exc()
+        if LOG_TO_FILE:
+            from lib.file_logging import log_crash
+
+            log_crash(exc)
+        raise

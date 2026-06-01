@@ -23,6 +23,11 @@ logger = logging.getLogger("socks5")
 
 
 SOCKS_VERSION = 5
+SOCKS4_VERSION = 4
+SOCKS4_CONNECT = 1
+SOCKS4_BIND = 2
+SOCKS4_REPLY_GRANTED = 0x5A
+SOCKS4_REPLY_REJECT = 0x5B
 
 
 class Socks5Status(IntEnum):
@@ -184,6 +189,52 @@ class UdpForwarder:
             self.server_conn_ipv6.close()
 
 
+class PrefixedStreamReader:
+    """StreamReader wrapper that replays bytes already read from the client."""
+
+    def __init__(self, reader: asyncio.StreamReader, prefix: bytes):
+        self._reader = reader
+        self._buffer = bytearray(prefix)
+
+    async def _take(self, n: int) -> bytes:
+        if n <= len(self._buffer):
+            out = bytes(self._buffer[:n])
+            del self._buffer[:n]
+            return out
+        out = bytes(self._buffer)
+        self._buffer.clear()
+        if n > len(out):
+            out += await self._reader.readexactly(n - len(out))
+        return out
+
+    async def readexactly(self, n: int) -> bytes:
+        return await self._take(n)
+
+    async def readline(self) -> bytes:
+        while True:
+            idx = self._buffer.find(b"\n")
+            if idx >= 0:
+                line = bytes(self._buffer[: idx + 1])
+                del self._buffer[: idx + 1]
+                return line
+            chunk = await self._reader.read(4096)
+            if not chunk:
+                if self._buffer:
+                    line = bytes(self._buffer)
+                    self._buffer.clear()
+                    return line
+                return b""
+            self._buffer.extend(chunk)
+
+    async def read(self, n: int = -1) -> bytes:
+        if n == -1:
+            rest = await self._reader.read()
+            result = bytes(self._buffer) + rest
+            self._buffer.clear()
+            return result
+        return await self._take(n)
+
+
 class AsyncSocks5Handler(AsyncProxyHandler):
     def send_reply(
         self, status: Socks5Status, bindaddr: tuple[str, int] | None = None
@@ -196,25 +247,57 @@ class AsyncSocks5Handler(AsyncProxyHandler):
         data = await self.reader.readexactly(struct.calcsize(fmt))
         return struct.unpack(fmt, data)
 
-    async def _handle(self) -> None:
-        # receive client's auth methods
-        version, nmethods = await self.readstruct("!BB")
-        if version != SOCKS_VERSION:
-            raise Exception(
-                "Invalid version %r (not configured as unencrypted SOCKS proxy?)"
-                % chr(version)
-            )
+    async def _read_null_terminated(self) -> bytes:
+        chunks = []
+        while True:
+            chunk = await self.reader.readexactly(1)
+            if chunk == b"\x00":
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
 
-        # get available methods
+    async def _send_socks4_reply(self, code: int) -> None:
+        self.writer.write(struct.pack("!BBH4s", 0, code, 0, b"\x00\x00\x00\x00"))
+        await self.writer.drain()
+
+    async def _handle_socks4(self, cmd: int) -> None:
+        port, = await self.readstruct("!H")
+        ip_bytes = await self.reader.readexactly(4)
+        await self._read_null_terminated()
+
+        ip = socket.inet_ntop(socket.AF_INET, ip_bytes)
+        if ip_bytes[:3] == b"\x00\x00\x00" and ip_bytes[3:4] != b"\x00":
+            address = (await self._read_null_terminated()).decode(), port
+            address_type = Socks5AddressType.DOMAIN
+        else:
+            address = ip, port
+            address_type = Socks5AddressType.IPV4
+
+        if cmd == SOCKS4_CONNECT:
+            try:
+                connection = await self.server.tcp_connect(address_type, address)
+            except Exception as exc:
+                await self._send_socks4_reply(SOCKS4_REPLY_REJECT)
+                raise exc
+
+            await self._send_socks4_reply(SOCKS4_REPLY_GRANTED)
+            await self.tcp_forward(connection)
+        elif cmd == SOCKS4_BIND:
+            await self._send_socks4_reply(SOCKS4_REPLY_REJECT)
+            logger.warning("%s: SOCKS4 BIND not supported", self.log_tag)
+        else:
+            await self._send_socks4_reply(SOCKS4_REPLY_REJECT)
+            logger.warning("%s: invalid SOCKS4 command %d", self.log_tag, cmd)
+
+    async def _handle_socks5(self) -> None:
+        (nmethods,) = await self.readstruct("!B")
+
         methods = await self.reader.readexactly(nmethods)
 
-        # accept only NONE auth
         if 0 not in methods:
-            # no acceptable methods - fail with method 255
             self.writer.write(struct.pack("!BB", SOCKS_VERSION, 0xFF))
             raise Exception("Unsupported auth methods %s" % str(methods))
 
-        # send welcome with auth method 0=NONE
         self.writer.write(struct.pack("!BB", SOCKS_VERSION, 0))
         version, cmd, _, address_type = await self.readstruct("!BBBB")
         if version != SOCKS_VERSION:
@@ -225,15 +308,12 @@ class AsyncSocks5Handler(AsyncProxyHandler):
             self.send_reply(Socks5Status.EAFNOSUPPORT)
             raise Exception("Unsupported address type %d" % address_type)
 
-        # reply
-        if cmd == 1:  # CONNECT
+        if cmd == 1:
             await self.handle_connect(address_type, address)
-        elif cmd == 3:  # UDP ASSOCIATE
-            # ignore the request host: the client might not actually know
-            # its own address
+        elif cmd == 3:
             client_address = self.writer.get_extra_info("peername")
             if client_address:
-                address = (client_address[0], address[1])
+                address = (client_address[0], client_address[1])
             await self.handle_udp(address)
         else:
             self.send_reply(Socks5Status.ENOTSUP)
@@ -241,7 +321,44 @@ class AsyncSocks5Handler(AsyncProxyHandler):
 
     async def handle(self) -> None:
         try:
-            await self._handle()
+            first = await self.reader.readexactly(1)
+            if (65 <= first[0] <= 90) or (97 <= first[0] <= 122):
+                from .http_proxy_server import AsyncHTTPProxyHandler
+
+                reader = PrefixedStreamReader(self.reader, first)
+                await AsyncHTTPProxyHandler(reader, self.writer, self.server).handle()
+                return
+
+            if first[0] == SOCKS_VERSION:
+                self.reader = PrefixedStreamReader(self.reader, first)
+                await self._handle_socks5()
+                return
+
+            if first[0] == SOCKS4_VERSION:
+                second = await self.reader.readexactly(1)
+                if second[0] not in (SOCKS4_CONNECT, SOCKS4_BIND):
+                    http_port = self.server.http_port or 9877
+                    logger.warning(
+                        "%s: not SOCKS4 (0x04 0x%02x) — misrouted TCP; "
+                        "use HTTP proxy :%d or SOCKS5",
+                        self.log_tag,
+                        second[0],
+                        http_port,
+                    )
+                    return
+                await self._handle_socks4(second[0])
+                return
+
+            http_port = self.server.http_port or 9877
+            raise Exception(
+                "Invalid protocol %r (expected SOCKS4, SOCKS5, or HTTP; "
+                "HTTP proxy is also on port %d)"
+                % (chr(first[0]), http_port)
+            )
+        except asyncio.IncompleteReadError:
+            logger.debug("%s: client closed during handshake", self.log_tag)
+        except (ConnectionResetError, BrokenPipeError):
+            pass
         except Exception as e:
             logger.error("%s: %s: %s", self.log_tag, type(e).__name__, e)
         finally:

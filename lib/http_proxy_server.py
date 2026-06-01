@@ -13,11 +13,46 @@ from .proxy_server import (
     SocketAddress,
     Socks5AddressType,
 )
+from .quiet_http import OptionalAccessLogMixin
 
 logger = logging.getLogger("http")
 
+# Client closed early (common for CONNECT / PAC / cancelled requests).
+_BENIGN_CLIENT_ERRORS = (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError)
 
-class AsyncHTTPProxyHandler(AsyncProxyHandler, BaseHTTPRequestHandler):
+
+def _benign_client_disconnect(exc: BaseException) -> bool:
+    if isinstance(exc, _BENIGN_CLIENT_ERRORS):
+        return True
+    return isinstance(exc, OSError) and exc.errno in (32, 54)  # EPIPE, ECONNRESET
+
+
+def _connect_error_message(address: SocketAddress, exc: BaseException) -> str:
+    detail = str(exc)
+    if not detail:
+        if isinstance(exc, OSError) and exc.errno is not None:
+            detail = "errno %s (%s)" % (exc.errno, exc.strerror or "unknown")
+        else:
+            detail = repr(exc)
+    return "Unable to connect to host %s: %s" % (address, detail)
+
+
+def _is_pac_path(path: str) -> bool:
+    lower = path.lower().split("?", 1)[0]
+    if lower.endswith("/wpad.dat") or lower.endswith("wpad.dat"):
+        return True
+    if lower.endswith("/wpad") or lower.endswith("/proxy.pac"):
+        return True
+    parsed = parse.urlparse(path, "http")
+    plower = parsed.path.lower()
+    return plower.endswith("/wpad.dat") or plower.endswith("/wpad") or plower.endswith(
+        "/proxy.pac"
+    )
+
+
+class AsyncHTTPProxyHandler(
+    AsyncProxyHandler, OptionalAccessLogMixin, BaseHTTPRequestHandler
+):
     def __init__(
         self,
         reader: asyncio.StreamReader,
@@ -57,16 +92,27 @@ class AsyncHTTPProxyHandler(AsyncProxyHandler, BaseHTTPRequestHandler):
         try:
             await getattr(self, mname)()
             await self.writer.drain()
-        except ConnectionResetError:
-            pass
         except Exception as e:
-            logger.error("%s: %s: %s", self.log_tag, type(e).__name__, e)
+            if _benign_client_disconnect(e):
+                logger.debug("%s: client disconnected (%s)", self.log_tag, e)
+            else:
+                logger.error("%s: %s: %s", self.log_tag, type(e).__name__, e)
 
     def log_error(self, format, *args):
         logger.error("%s: " + format, self.log_tag, *args)
 
-    def log_message(self, format, *args):
-        logger.info("%s: " + format, self.log_tag, *args)
+    async def _serve_pac(self) -> None:
+        body = getattr(self.server, "pac_body", None)
+        if not body:
+            self.send_error(HTTPStatus.NOT_FOUND, "PAC not configured")
+            return
+        content = b"" if self.command == "HEAD" else body
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ns-proxy-autoconfig")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        if content:
+            self.wfile.write(content)
 
     async def do_CONNECT(self):
         address: SocketAddress
@@ -83,7 +129,7 @@ class AsyncHTTPProxyHandler(AsyncProxyHandler, BaseHTTPRequestHandler):
         except Exception as e:
             self.send_error(
                 HTTPStatus.BAD_GATEWAY,
-                "Unable to connect to host %s: %s" % (address, e),
+                _connect_error_message(address, e),
             )
             return
 
@@ -119,11 +165,9 @@ class AsyncHTTPProxyHandler(AsyncProxyHandler, BaseHTTPRequestHandler):
         except Exception as e:
             self.send_error(
                 HTTPStatus.BAD_GATEWAY,
-                "Unable to connect to host %s: %s" % (address, e),
+                _connect_error_message(address, e),
             )
             return
-
-        self.log_request()
 
         s_reader, s_writer = connection
         headers = copy.copy(self.headers)
