@@ -75,7 +75,7 @@ Players usually connect straight to `https://…` on port 443. PAC only helps ap
 
 1. Keep **Socks-Proxy-On** for browsers and apps that respect system proxy.
 2. In each player: **SOCKS5** → `phoneLanHost`:**`socksPort`** (9876) or **HTTP** → `phoneLanHost`:**`httpPort`** (9877).
-3. **PotPlayer + Clash:** [potplayer/README.md](potplayer/README.md#clash--mihomo-recommended-for-potplayer) — use `potplayer/clash-potplayer.example.yaml` (TUN + `PROCESS-NAME`; Mihomo core).
+3. **PotPlayer + Clash:** [potplayer/README.md](potplayer/README.md#clash--mihomo-recommended-for-potplayer) — use `potplayer/clash-potplayer.example.yaml` (TUN + `PROCESS-NAME`; **`fallback`** group with `interval` for SOCKS→HTTP→DIRECT).
 4. **PotPlayer without Clash:** same folder — `potPlayerProxy: true` + calibration, or F5 → SOCKS5.
 5. **Proxifier** (or similar): force a given `.exe` through SOCKS/HTTP when the app has no proxy UI.
 

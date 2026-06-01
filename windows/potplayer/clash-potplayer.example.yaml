@@ -21,12 +21,25 @@ proxies:
     port: 9877            # httpPort
 
 proxy-groups:
+  # fallback: auto SOCKS -> HTTP -> DIRECT when health checks fail.
+  # interval: seconds between checks (see potplayer/README.md).
   - name: iPhone
-    type: select
+    type: fallback
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    timeout: 5000
     proxies:
       - iOS-Phone-SOCKS
       - iOS-Phone-HTTP
       - DIRECT
+
+  # Manual pick instead of fallback — comment out iPhone fallback above and use:
+  # - name: iPhone
+  #   type: select
+  #   proxies:
+  #     - iOS-Phone-SOCKS
+  #     - iOS-Phone-HTTP
+  #     - DIRECT
 
 # Recommended for PotPlayer: TUN captures the player (it ignores Windows PAC).
 tun:

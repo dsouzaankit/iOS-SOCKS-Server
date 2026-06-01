@@ -35,14 +35,58 @@ PotPlayer **does not use Windows PAC**, so `Socks-Proxy-On.cmd` alone will not r
 1. Copy **`clash-potplayer.example.yaml`** and merge into your profile (or paste the blocks into an existing config).
 2. Replace **`10.0.100.10`** with your **PHONE_IP**.
 3. Enable the profile → turn **TUN** on (required for PotPlayer).
-4. In the **iPhone** proxy group, select **iOS-Phone-SOCKS** (port **9876**). Use **iOS-Phone-HTTP** (**9877**) only if SOCKS fails.
+4. The example **`iPhone`** group uses **`type: fallback`** (SOCKS → HTTP → DIRECT). No manual node pick needed unless you switch to **`select`** (see below).
 5. Start PotPlayer and play a URL; check Pythonista or `http://PHONE_IP:8765/`.
+
+### Fallback proxy group (`interval`, health checks)
+
+The example routes PotPlayer through an **`iPhone`** group with **`type: fallback`**. Mihomo / Clash Meta tries proxies **in list order** and moves down when the active one fails the health check.
+
+| Field | Example | Meaning |
+|-------|---------|---------|
+| `type` | `fallback` | Auto failover (not manual `select`) |
+| `url` | `http://www.gstatic.com/generate_204` | Probe URL (204 = healthy). Alternatives: `http://cp.cloudflare.com/generate_204` |
+| `interval` | `300` | Re-check every **300 seconds** (5 min) |
+| `timeout` | `5000` | Per-check timeout in **milliseconds** |
+| `proxies` | SOCKS → HTTP → DIRECT | Try SOCKS first; on failure use HTTP, then direct |
+
+**Order matters:** list proxies from preferred to last resort:
+
+```yaml
+proxy-groups:
+  - name: iPhone
+    type: fallback
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    timeout: 5000
+    proxies:
+      - iOS-Phone-SOCKS
+      - iOS-Phone-HTTP
+      - DIRECT
+```
+
+**Tuning `interval` for tethering**
+
+| `interval` | When to use |
+|------------|-------------|
+| `120` | Flaky hotspot — faster failover, more probes |
+| `300` | Default in the example — balanced |
+| `600` | Stable link — fewer checks |
+
+Very low values (e.g. `10`) spam the phone running `socks5.py`; avoid unless debugging.
+
+**`interval` does not apply to `type: select`** — that group only changes when you pick a node in Clash Verge. The YAML file includes a commented **`select`** block if you prefer manual SOCKS vs HTTP.
+
+**When fallback moves:** each `interval`, Clash requests `url` through the current proxy. On failure it activates the next proxy in `proxies`. When SOCKS is healthy again, fallback typically **returns to the first** working entry (SOCKS).
+
+**Other group types:** `url-test` also uses `interval` but picks the **fastest** node, not list order. `load-balance` spreads traffic; not ideal for a single phone upstream.
 
 ### What the example does
 
 | Piece | Purpose |
 |-------|---------|
 | `iOS-Phone-SOCKS` | Upstream SOCKS5 to the phone (`:9876`) |
+| `iPhone` (`fallback`) | Auto SOCKS → HTTP → DIRECT with `interval` health checks |
 | `tun.enable: true` | Captures app traffic PotPlayer would otherwise send direct |
 | `PROCESS-NAME,PotPlayerMini64.exe` | Only PotPlayer uses the phone; other apps stay **DIRECT** |
 
