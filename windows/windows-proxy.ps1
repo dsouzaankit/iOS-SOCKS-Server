@@ -46,18 +46,25 @@ function Get-ProxyState {
 }
 
 function Save-ProxyBackup {
-    if (Test-Path -LiteralPath $BackupPath) { return }
+    param([string] $ExpectedPacUrl)
+    $regPath = Get-WinInetSettingsPath
+    $currentPac = [string](Get-ItemProperty -Path $regPath).AutoConfigURL
+    if ((Test-Path -LiteralPath $BackupPath) -and ($currentPac.Trim() -eq $ExpectedPacUrl)) {
+        return
+    }
     Get-WinInetProxyBackupData | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $BackupPath -Encoding UTF8
 }
 
 function Restore-ProxyBackup {
     if (-not (Test-Path -LiteralPath $BackupPath)) {
         Clear-WinInetPacProxy
-        return
+        return 'cleared (no backup; proxy disabled)'
     }
     $backup = Get-Content -LiteralPath $BackupPath -Raw | ConvertFrom-Json
     Restore-WinInetProxyBackupData -Backup $backup
     Remove-Item -LiteralPath $BackupPath -Force
+    Sync-WinInetBlobFromRegistry
+    return 'restored from backup'
 }
 
 function Resolve-PacUrl {
@@ -83,7 +90,7 @@ switch ($Action) {
     }
     "On" {
         $url = Resolve-PacUrl
-        Save-ProxyBackup
+        Save-ProxyBackup -ExpectedPacUrl $url
         Set-WinInetPacProxy -PacUrl $url
         Refresh-InternetSettings
         Write-Host "PAC proxy ON: $url"
@@ -91,8 +98,17 @@ switch ($Action) {
         Write-Host "Keep Pythonista in the foreground on the phone while tethering."
     }
     "Off" {
-        Restore-ProxyBackup
+        $result = Restore-ProxyBackup
         Refresh-InternetSettings
-        Write-Host "Proxy settings restored (or cleared if no backup)."
+        $s = Get-ProxyState
+        Write-Host "Proxy OFF: $result"
+        if ($s.PacUrl) {
+            Write-Host "Warning: PAC URL still set: $($s.PacUrl)"
+            Write-Host "Delete $BackupPath if stuck, then run Off again."
+        } elseif ($s.ManualEnabled -and $s.ManualServer) {
+            Write-Host "Restored manual proxy: $($s.ManualServer)"
+        } else {
+            Write-Host "Setup script and manual proxy are off."
+        }
     }
 }

@@ -45,6 +45,43 @@ function New-DisabledConnectionSettingsBytes {
     )
 }
 
+function New-ManualConnectionSettingsBytes {
+    param(
+        [string] $ProxyServer,
+        [string] $Bypass = ''
+    )
+    $revision = 2
+    $proxyOptions = 3   # manual proxy only
+    $pacBytes = [byte[]]@()
+    $proxyBytes = [System.Text.Encoding]::ASCII.GetBytes($ProxyServer)
+    $bypassBytes = [System.Text.Encoding]::ASCII.GetBytes($Bypass)
+    [byte[]]@(
+        @(70, 0, 0, 0) +
+        @($revision, 0, 0, 0) +
+        @($proxyOptions, 0, 0, 0) +
+        @($proxyBytes.Length, 0, 0, 0) + $proxyBytes +
+        @($bypassBytes.Length, 0, 0, 0) + $bypassBytes +
+        @(0, 0, 0, 0) + $pacBytes +
+        @(1..32 | ForEach-Object { 0 })
+    )
+}
+
+function Sync-WinInetBlobFromRegistry {
+    $regPath = Get-WinInetSettingsPath
+    $p = Get-ItemProperty -Path $regPath
+    $pac = [string]$p.AutoConfigURL
+    $server = [string]$p.ProxyServer
+    $manual = [bool]$p.ProxyEnable
+    if (-not [string]::IsNullOrWhiteSpace($pac)) {
+        $bytes = New-PacConnectionSettingsBytes -PacUrl $pac.Trim()
+    } elseif ($manual -and -not [string]::IsNullOrWhiteSpace($server)) {
+        $bytes = New-ManualConnectionSettingsBytes -ProxyServer $server.Trim() -Bypass ([string]$p.ProxyOverride)
+    } else {
+        $bytes = New-DisabledConnectionSettingsBytes
+    }
+    Set-WinInetConnectionSettingsBytes -Bytes $bytes
+}
+
 function Set-WinInetConnectionSettingsBytes {
     param([byte[]] $Bytes)
     $connPath = Get-WinInetConnectionsPath
@@ -125,5 +162,8 @@ function Restore-WinInetProxyBackupData {
     } elseif ($Backup.DefaultConnectionSettings) {
         $bytes = [Convert]::FromBase64String([string]$Backup.DefaultConnectionSettings)
         Set-ItemProperty -Path $connPath -Name SavedLegacySettings -Value $bytes
+    }
+    if (-not $Backup.DefaultConnectionSettings) {
+        Sync-WinInetBlobFromRegistry
     }
 }

@@ -56,3 +56,11 @@ PowerShell equivalent:
 | `iCloudDownloads` | Folder for `deploy.ps1` zip copy (optional) |
 
 Legacy one-line **`ios-socks-phone-ip.txt`** is still read/written (gitignored).
+
+### Off does not clear Settings → Proxy
+
+**Off** restores what you had before **On**, or fully disables PAC if the backup file is already gone. Windows also stores proxy in a **connection blob**; if that blob was not restored, Settings could still show “Use setup script”.
+
+1. Run **`Socks-Proxy-Off.cmd`** and read the message — expect `Setup script and manual proxy are off`.
+2. If PAC is still on, delete `%LOCALAPPDATA%\iOS-SOCKS-Server-proxy-backup.json` and run **Off** again.
+3. Run **On** again before the next tether session so a new backup is saved.
