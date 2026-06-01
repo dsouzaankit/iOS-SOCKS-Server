@@ -59,6 +59,13 @@ Set `INSTALL_SHORTCUT_LAUNCHER = False` in `socks5.py` only if you will **not** 
         3. **Script address**: paste the **PAC URL** exactly as shown in Pythonista (`http://<phone-ip>:8088/wpad.dat`).
         4. Save and leave the page. Open a browser and confirm traffic goes through the phone (check the Pythonista console or `http://<phone-ip>:8765/` if LAN debug is on).
         - **Manual HTTP proxy** (if PAC does not work): under **Manual proxy setup**, turn **Use a proxy server** **On**, set **Address** to the phone IP and **Port** to **9877** (HTTP proxy from the banner). SOCKS is not exposed in this screen; prefer the PAC URL so both HTTP and SOCKS5 are configured.
+        - **PowerShell toggle** (same PAC as Settings): from the project folder, after `socks5.py` is running on the phone:
+          ```powershell
+          .\windows-proxy.ps1 -Action Status
+          .\windows-proxy.ps1 -Action On  -PhoneIp <phone-ip>    # or -PacUrl http://<phone-ip>:8088/wpad.dat
+          .\windows-proxy.ps1 -Action Off                        # restores prior proxy settings
+          ```
+          Backs up your current user proxy once before **On**; **Off** restores it. Per-user only (not `netsh winhttp`).
         - **Classic dialog**: Win+R → `inetcpl.cpl` → **Connections** → **LAN settings** → check **Use automatic configuration script** and enter the same PAC URL. Useful if Settings and legacy apps disagree.
         - Many desktop apps ignore system proxy settings; configure those apps separately or use a tool such as [Proxifier](https://www.proxifier.com/) (paid) if needed.
         - Optional: [SSTap](https://sourceforge.net/projects/sstap/) can force more traffic through a proxy; this project is not affiliated with SSTap and cannot support it.
