@@ -15,8 +15,6 @@ All Windows-side scripts and config live in this folder (same layout as Loop Seg
 | `Install-SocksDailyShortcuts.ps1` | Desktop shortcuts to the `.cmd` pair |
 | `IOS-Socks-Windows.ps1` | Shared config loader (dot-sourced; do not run directly) |
 
-Repo root `windows-proxy.ps1` only forwards here for old habits.
-
 ## First time on this PC
 
 ```powershell
