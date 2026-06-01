@@ -20,6 +20,7 @@ param(
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\IOS-Socks-Windows.ps1"
 . "$PSScriptRoot\WinInet-ProxySettings.ps1"
+. "$PSScriptRoot\potplayer\PotPlayer-ProxySettings.ps1"
 
 function Refresh-InternetSettings {
     if (-not ("WinInet.Refresh" -as [type])) {
@@ -87,6 +88,8 @@ switch ($Action) {
             Write-Host ""
             Write-Host 'Note: Manual proxy is set but PAC is empty. Run -Action On for setup script mode.'
         }
+        Write-Host ""
+        Show-PotPlayerProxyStatus
     }
     "On" {
         $url = Resolve-PacUrl
@@ -96,6 +99,8 @@ switch ($Action) {
         Write-Host "PAC proxy ON: $url"
         Write-Host 'Check Settings -> Network and Internet -> Proxy -> Use setup script.'
         Write-Host "Keep Pythonista in the foreground on the phone while tethering."
+        $pp = Set-PotPlayerProxyState -State on
+        if ($pp) { Write-Host "PotPlayer: $pp" }
     }
     "Off" {
         $result = Restore-ProxyBackup
@@ -110,5 +115,7 @@ switch ($Action) {
         } else {
             Write-Host "Setup script and manual proxy are off."
         }
+        $pp = Set-PotPlayerProxyState -State off
+        if ($pp) { Write-Host "PotPlayer: $pp" }
     }
 }

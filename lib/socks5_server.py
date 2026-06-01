@@ -236,12 +236,13 @@ class PrefixedStreamReader:
 
 
 class AsyncSocks5Handler(AsyncProxyHandler):
-    def send_reply(
+    async def send_reply(
         self, status: Socks5Status, bindaddr: tuple[str, int] | None = None
     ) -> None:
         reply = struct.pack("!BBB", SOCKS_VERSION, status, 0)
         reply += encode_address(bindaddr)
         self.writer.write(reply)
+        await self.writer.drain()
 
     async def readstruct(self, fmt: str) -> tuple[Any, ...]:
         data = await self.reader.readexactly(struct.calcsize(fmt))
@@ -296,16 +297,18 @@ class AsyncSocks5Handler(AsyncProxyHandler):
 
         if 0 not in methods:
             self.writer.write(struct.pack("!BB", SOCKS_VERSION, 0xFF))
+            await self.writer.drain()
             raise Exception("Unsupported auth methods %s" % str(methods))
 
         self.writer.write(struct.pack("!BB", SOCKS_VERSION, 0))
+        await self.writer.drain()
         version, cmd, _, address_type = await self.readstruct("!BBBB")
         if version != SOCKS_VERSION:
             raise Exception("Invalid version %r after auth" % chr(version))
 
         address = await self.read_addrport(address_type)
         if address is None:
-            self.send_reply(Socks5Status.EAFNOSUPPORT)
+            await self.send_reply(Socks5Status.EAFNOSUPPORT)
             raise Exception("Unsupported address type %d" % address_type)
 
         if cmd == 1:
@@ -316,7 +319,7 @@ class AsyncSocks5Handler(AsyncProxyHandler):
                 address = (client_address[0], client_address[1])
             await self.handle_udp(address)
         else:
-            self.send_reply(Socks5Status.ENOTSUP)
+            await self.send_reply(Socks5Status.ENOTSUP)
             raise Exception("Command %d unsupported" % cmd)
 
     async def handle(self) -> None:
@@ -330,7 +333,7 @@ class AsyncSocks5Handler(AsyncProxyHandler):
                 return
 
             if first[0] == SOCKS_VERSION:
-                self.reader = PrefixedStreamReader(self.reader, first)
+                # Version byte already consumed; do not prefix it (would read 5 as nmethods).
                 await self._handle_socks5()
                 return
 
@@ -386,10 +389,10 @@ class AsyncSocks5Handler(AsyncProxyHandler):
         try:
             connection = await self.server.tcp_connect(address_type, address)
         except Exception as e:
-            self.send_reply(Socks5Status.EHOSTUNREACH)
+            await self.send_reply(Socks5Status.EHOSTUNREACH)
             raise e
 
-        self.send_reply(Socks5Status.SUCCEEDED)
+        await self.send_reply(Socks5Status.SUCCEEDED)
         await self.tcp_forward(connection)
 
     async def handle_udp(self, client_address: SocketAddress) -> None:
@@ -400,12 +403,12 @@ class AsyncSocks5Handler(AsyncProxyHandler):
             udp_forwarder = UdpForwarder(self.log_tag, self.server, csock_addr)
             await udp_forwarder.start()
         except Exception as e:
-            self.send_reply(Socks5Status.ERROR)
+            await self.send_reply(Socks5Status.ERROR)
             raise e
 
         csock_port = udp_forwarder.client_conn.get_extra_info("sockname")[1]
 
-        self.send_reply(Socks5Status.SUCCEEDED, (csock_addr, csock_port))
+        await self.send_reply(Socks5Status.SUCCEEDED, (csock_addr, csock_port))
         try:
             while True:
                 chunk = await self.reader.read(4096)

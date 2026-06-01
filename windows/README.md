@@ -15,6 +15,7 @@ All Windows-side scripts and config live in this folder (same layout as Loop Seg
 | `Socks-Proxy-Off.cmd` | One-click **OFF** (restores prior proxy) |
 | `Install-SocksDailyShortcuts.ps1` | Desktop shortcuts to the `.cmd` pair |
 | `IOS-Socks-Windows.ps1` | Shared config loader (dot-sourced; do not run directly) |
+| [potplayer/](potplayer/README.md) | Optional PotPlayer proxy calibration + toggle |
 
 ## First time on this PC
 
@@ -54,8 +55,31 @@ PowerShell equivalent:
 | `httpPort` | HTTP proxy port (default **9877**) |
 | `lanDebugPort` | LAN log server (default **8765**; change if Loop Segments uses 8765) |
 | `iCloudDownloads` | Folder for `deploy.ps1` zip copy (optional) |
+| `potPlayerProxy` | When `true`, On/Off also apply calibrated PotPlayer proxy patches |
+| `potPlayerRegKey` | Registry app key under `HKCU\Software\Daum\` (default `PotPlayerMini64`) |
 
 Legacy one-line **`ios-socks-phone-ip.txt`** is still read/written (gitignored).
+
+## Media players and PAC
+
+**`Socks-Proxy-On.cmd` / `windows-proxy.ps1`** turn on Windows **PAC** (setup script → phone WPAD). That is **not** a guarantee that every app uses the phone.
+
+| App type | Typical behavior |
+|----------|------------------|
+| Edge, Chrome, many WinINET apps | Often use PAC when proxy is On |
+| PotPlayer, VLC, MPC-HC, mpv, most players | Usually **ignore PAC** and often **ignore** system manual HTTP too; use **in-app** proxy or Proxifier |
+
+Players usually connect straight to `https://…` on port 443. PAC only helps apps that ask Windows for a proxy rule first.
+
+**What to do for streaming**
+
+1. Keep **Socks-Proxy-On** for browsers and apps that respect system proxy.
+2. In each player: **SOCKS5** → `phoneLanHost`:**`socksPort`** (9876) or **HTTP** → `phoneLanHost`:**`httpPort`** (9877).
+3. **PotPlayer + Clash:** [potplayer/README.md](potplayer/README.md#clash--mihomo-recommended-for-potplayer) — use `potplayer/clash-potplayer.example.yaml` (TUN + `PROCESS-NAME`; Mihomo core).
+4. **PotPlayer without Clash:** same folder — `potPlayerProxy: true` + calibration, or F5 → SOCKS5.
+5. **Proxifier** (or similar): force a given `.exe` through SOCKS/HTTP when the app has no proxy UI.
+
+**Sanity check:** With proxy On, load a site in **Edge** and watch Pythonista or `http://<phone-ip>:8765/`. If the browser hits the phone but the player does not, PAC is working — the player is bypassing it.
 
 ### Off does not clear Settings → Proxy
 

@@ -32,5 +32,16 @@ function New-DailyShortcut {
 
 New-DailyShortcut -Name 'Socks Proxy ON' -CmdName 'Socks-Proxy-On.cmd'
 New-DailyShortcut -Name 'Socks Proxy OFF' -CmdName 'Socks-Proxy-Off.cmd'
+$calibrate = Join-Path $WindowsDir 'potplayer\PotPlayer-Proxy-Calibrate.cmd'
+if (Test-Path -LiteralPath $calibrate) {
+    $lnk = Join-Path $Desktop 'PotPlayer Proxy Calibrate.lnk'
+    $sc = $Shell.CreateShortcut($lnk)
+    $sc.TargetPath = $calibrate
+    $sc.WorkingDirectory = $WindowsDir
+    $sc.Description = 'iOS SOCKS — one-time PotPlayer proxy calibration'
+    $sc.Save()
+    Write-Host "Created: $lnk"
+}
 Write-Host ''
 Write-Host 'Run socks5.py on the iPhone, then double-click Socks Proxy ON.'
+Write-Host 'PotPlayer: run PotPlayer Proxy Calibrate once if you use potPlayerProxy.'

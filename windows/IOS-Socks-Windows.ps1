@@ -11,13 +11,15 @@ function Get-IOSSocksWindowsExamplePath {
 
 function Get-DefaultIOSSocksWindowsSettings {
     [ordered]@{
-        phoneLanHost    = ''
-        wpadPort        = 8088
-        socksPort       = 9876
-        httpPort        = 9877
-        lanDebugPort    = 8765
-        iCloudDownloads = ''
-        notes           = ''
+        phoneLanHost     = ''
+        wpadPort         = 8088
+        socksPort        = 9876
+        httpPort         = 9877
+        lanDebugPort     = 8765
+        iCloudDownloads  = ''
+        potPlayerProxy   = $false
+        potPlayerRegKey  = 'PotPlayerMini64'
+        notes            = ''
     }
 }
 
@@ -152,4 +154,6 @@ function Show-IOSSocksWindowsDiagnostics {
     Write-Host "  iCloudDownloads: $(if ($s.iCloudDownloads) { $s.iCloudDownloads } else { '(default in deploy.ps1)' })"
     Write-Host "  PAC URL:         $(Get-IOSSocksPacUrl)"
     Write-Host "  LAN debug:       $(Get-IOSSocksLanDebugUrl)"
+    Write-Host "  potPlayerProxy:  $($s.potPlayerProxy)"
+    if ($s.potPlayerRegKey) { Write-Host "  potPlayerRegKey: $($s.potPlayerRegKey)" }
 }

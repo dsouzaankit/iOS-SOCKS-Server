@@ -1,0 +1,52 @@
+# Example Mihomo / Clash Meta profile snippet for PotPlayer + iOS-SOCKS-Server
+#
+# 1. Run socks5.py on the iPhone (foreground).
+# 2. Set PHONE_IP from the Pythonista banner (not this file's example IP).
+# 3. Merge into your Clash Verge profile (or use as a starting local profile).
+# 4. Use Mihomo / Clash Meta — PROCESS-NAME rules need the Meta core on Windows.
+# 5. Turn OFF windows\Socks-Proxy-On.cmd while using Clash TUN (avoid double proxy).
+#
+# PotPlayer paths (adjust if you use 32-bit PotPlayerMini.exe only):
+#   C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe
+
+proxies:
+  - name: iOS-Phone-SOCKS
+    type: socks5
+    server: 10.0.100.10   # <-- PHONE_IP from socks5.py banner
+    port: 9876            # socksPort in ios-socks-windows.json
+
+  - name: iOS-Phone-HTTP
+    type: http
+    server: 10.0.100.10   # <-- PHONE_IP
+    port: 9877            # httpPort
+
+proxy-groups:
+  - name: iPhone
+    type: select
+    proxies:
+      - iOS-Phone-SOCKS
+      - iOS-Phone-HTTP
+      - DIRECT
+
+# Recommended for PotPlayer: TUN captures the player (it ignores Windows PAC).
+tun:
+  enable: true
+  stack: system
+  auto-route: true
+  auto-detect-interface: true
+
+# Route only PotPlayer through the phone; everything else stays DIRECT.
+# (Requires Clash Meta / Mihomo on Windows.)
+rules:
+  - PROCESS-NAME,PotPlayerMini64.exe,iPhone
+  - PROCESS-NAME,PotPlayerMini.exe,iPhone
+  - MATCH,DIRECT
+
+# --- Alternatives (pick one approach) ---
+#
+# A) Send all traffic through the phone while tethering:
+#    rules:
+#      - MATCH,iPhone
+#
+# B) Skip Clash for PotPlayer — use potplayer/PotPlayer-Proxy-Calibrate.cmd
+#    and windows\Socks-Proxy-On.cmd with potPlayerProxy: true instead.

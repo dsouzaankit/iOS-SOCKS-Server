@@ -64,7 +64,7 @@ Set `INSTALL_SHORTCUT_LAUNCHER = False` in `socks5.py` only if you will **not** 
         - **One-click daily pair** (after `socks5.py` is running): `windows\Socks-Proxy-On.cmd` / `windows\Socks-Proxy-Off.cmd`, or `.\windows\Install-SocksDailyShortcuts.ps1` for desktop shortcuts.
         - **PowerShell:** `cd windows` then `.\windows-proxy.ps1 -Action On` / `-Action Off`. Backs up proxy once before **On**; **Off** restores. Per-user only (not `netsh winhttp`).
         - **Classic dialog**: Win+R → `inetcpl.cpl` → **Connections** → **LAN settings** → check **Use automatic configuration script** and enter the same PAC URL. Useful if Settings and legacy apps disagree.
-        - Many desktop apps ignore system proxy settings; configure those apps separately or use a tool such as [Proxifier](https://www.proxifier.com/) (paid) if needed.
+        - **Media players and PAC:** `Socks-Proxy-On.cmd` sets Windows **PAC** (WinINET). That works for many **browsers** and some desktop apps. **Most media players** (PotPlayer, VLC, MPC-HC, mpv, etc.) open **direct TCP** to CDNs and **do not read PAC** — even when Settings shows “Use setup script”. For **PotPlayer on Windows**, the recommended setup is **Clash Verge (Mihomo) + TUN** using [windows/potplayer/clash-potplayer.example.yaml](windows/potplayer/clash-potplayer.example.yaml) (see [windows/potplayer/README.md](windows/potplayer/README.md)). Alternatives: in-player SOCKS5, `PotPlayer-Proxy-Calibrate.cmd`, or Proxifier.
         - Optional: [SSTap](https://sourceforge.net/projects/sstap/) can force more traffic through a proxy; this project is not affiliated with SSTap and cannot support it.
     - For **Linux**, use your desktop environment’s network proxy settings with the **PAC URL** if supported, or set HTTP proxy to `<phone-ip>:9877` and SOCKS5 to `<phone-ip>:9876` manually.
     - For Android: open Settings, Wi-Fi, select your network, expand the Advanced Settings, change the proxy setting to Manual, and enter the host and port for the *HTTP proxy*. Note that SOCKS proxy support on Android is limited, even when using the PAC URL, so the HTTP proxy is recommended.
@@ -111,6 +111,12 @@ On iOS/macOS, **errno 48** means a port the proxy needs is still held by a **pre
 4. Only start the proxy **one way at a time** (either **Run** in Pythonista or the home screen URL, not both in quick succession).
 
 If 48 still appears after a force quit, restart the iPhone (rare stuck listener). If another tool uses the same ports, change `SOCKS_PORT`, `HTTP_PORT`, `WPAD_PORT`, and/or `LAN_DEBUG_PORT` at the top of `socks5.py` and update client proxy/PAC settings to match.
+
+## SOCKS5 (9876) stuck but HTTP (9877) works
+
+Some clients (Clash, Proxifier **Check**, etc.) hung on **SOCKS5** while **HTTP** on **9877** worked. Two bugs in `lib/socks5_server.py`: missing `drain()` after the auth reply, and the SOCKS version byte was replayed so `nmethods` was read as `5` instead of `1`. Both fixed — **re-run / redeploy `socks5.py` on the phone** after updating.
+
+Until then, point Clash or Proxifier at **HTTP** `phone-ip:9877` instead of SOCKS `9876`.
 
 ## Error 32: Broken pipe (`BrokenPipeError`, `EPIPE`)
 
