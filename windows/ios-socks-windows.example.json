@@ -1,0 +1,9 @@
+{
+  "phoneLanHost": "172.20.10.1",
+  "wpadPort": 8088,
+  "socksPort": 9876,
+  "httpPort": 9877,
+  "lanDebugPort": 8765,
+  "iCloudDownloads": "",
+  "notes": "Per-PC file (gitignored). Copy to ios-socks-windows.json on each Windows PC. phoneLanHost = IP from Pythonista socks5.py banner (often 172.20.10.1 on Personal Hotspot)."
+}

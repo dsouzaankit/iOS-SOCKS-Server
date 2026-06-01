@@ -4,3 +4,5 @@ __pycache__/
 .cursor/
 ai_transcript/
 *.code-workspace
+windows/ios-socks-windows.json
+windows/ios-socks-phone-ip.txt

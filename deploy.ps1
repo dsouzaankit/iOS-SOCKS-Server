@@ -15,12 +15,21 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectName = Split-Path -Leaf $ProjectRoot
 $ZipName = "$ProjectName.zip"
-$ICloudDownloads = "C:\Users\dsouzaankit\iCloudDrive\Downloads"
+$ICloudDownloads = Join-Path $env:USERPROFILE "iCloudDrive\Downloads"
+
+$configModule = Join-Path $ProjectRoot "windows\IOS-Socks-Windows.ps1"
+if (Test-Path -LiteralPath $configModule) {
+    . $configModule
+    $winCfg = Get-IOSSocksWindowsSettings
+    if (-not [string]::IsNullOrWhiteSpace([string]$winCfg.iCloudDownloads)) {
+        $ICloudDownloads = Resolve-IOSSocksPath ([string]$winCfg.iCloudDownloads)
+    }
+}
 $TempZip = Join-Path $env:TEMP $ZipName
 $DestZip = Join-Path $ICloudDownloads $ZipName
 
 $ExcludeDirs = @(".git", "__pycache__", ".cursor", ".vscode")
-$ExcludeFiles = @("*.pyc", "deploy.ps1")
+$ExcludeFiles = @("*.pyc", "deploy.ps1", "ios-socks-windows.json", "ios-socks-phone-ip.txt")
 
 function Write-Step($Message) {
     Write-Host "==> $Message"

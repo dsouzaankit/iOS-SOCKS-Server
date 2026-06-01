@@ -6,7 +6,7 @@ A simple HTTP/SOCKS proxy designed to run on Pythonista on iOS, letting you fake
 
 This project is a **fork** of [nneonneo/iOS-SOCKS-Server](https://github.com/nneonneo/iOS-SOCKS-Server) ([@nneonneo](https://github.com/nneonneo)). The original `socks5.py` credits [@philrosenthal](https://github.com/philrosenthal) for the statistics view and IPv6 support.
 
-**Fork changes (dsouzaankit):** iOS Shortcuts / `RunSOCKSProxy.py` launcher, LAN file logging and debug server, quiet console mode, Pythonista dark UI / keep-awake helpers, Windows deploy workflow (`deploy.ps1`), and expanded README (Windows proxy setup, stopping, troubleshooting).
+**Fork changes (dsouzaankit):** iOS Shortcuts / `RunSOCKSProxy.py` launcher, LAN file logging and debug server, quiet console mode, Pythonista dark UI / keep-awake helpers, Windows folder (`windows/`) with per-PC config, one-click proxy on/off, `deploy.ps1`, and expanded README.
 
 To compare with upstream: `git fetch upstream` then `git log upstream/master..HEAD`.
 
@@ -59,13 +59,10 @@ Set `INSTALL_SHORTCUT_LAUNCHER = False` in `socks5.py` only if you will **not** 
         3. **Script address**: paste the **PAC URL** exactly as shown in Pythonista (`http://<phone-ip>:8088/wpad.dat`).
         4. Save and leave the page. Open a browser and confirm traffic goes through the phone (check the Pythonista console or `http://<phone-ip>:8765/` if LAN debug is on).
         - **Manual HTTP proxy** (if PAC does not work): under **Manual proxy setup**, turn **Use a proxy server** **On**, set **Address** to the phone IP and **Port** to **9877** (HTTP proxy from the banner). SOCKS is not exposed in this screen; prefer the PAC URL so both HTTP and SOCKS5 are configured.
-        - **PowerShell toggle** (same PAC as Settings): from the project folder, after `socks5.py` is running on the phone:
-          ```powershell
-          .\windows-proxy.ps1 -Action Status
-          .\windows-proxy.ps1 -Action On  -PhoneIp <phone-ip>    # or -PacUrl http://<phone-ip>:8088/wpad.dat
-          .\windows-proxy.ps1 -Action Off                        # restores prior proxy settings
-          ```
-          Backs up your current user proxy once before **On**; **Off** restores it. Per-user only (not `netsh winhttp`).
+        - **Windows scripts:** everything is under [windows/](windows/README.md) — config, proxy toggle, and one-click `.cmd` files.
+        - **Per-PC config:** copy `windows/ios-socks-windows.example.json` → `windows/ios-socks-windows.json`, then `.\windows\Set-IOSSocksWindows.ps1 -PhoneHost <phone-ip>`.
+        - **One-click daily pair** (after `socks5.py` is running): `windows\Socks-Proxy-On.cmd` / `windows\Socks-Proxy-Off.cmd`, or `.\windows\Install-SocksDailyShortcuts.ps1` for desktop shortcuts.
+        - **PowerShell:** `cd windows` then `.\windows-proxy.ps1 -Action On -OpenBrowser` / `-Action Off`. Backs up proxy once before **On**; **Off** restores. Per-user only (not `netsh winhttp`).
         - **Classic dialog**: Win+R → `inetcpl.cpl` → **Connections** → **LAN settings** → check **Use automatic configuration script** and enter the same PAC URL. Useful if Settings and legacy apps disagree.
         - Many desktop apps ignore system proxy settings; configure those apps separately or use a tool such as [Proxifier](https://www.proxifier.com/) (paid) if needed.
         - Optional: [SSTap](https://sourceforge.net/projects/sstap/) can force more traffic through a proxy; this project is not affiliated with SSTap and cannot support it.
@@ -159,10 +156,10 @@ Do this **after** force quitting Pythonista and **before** running `deploy.ps1` 
 
 ### 3. Run deploy on the PC
 
-From the project folder on Windows:
+From the project folder on Windows (optional: set `iCloudDownloads` in `windows/ios-socks-windows.json` via `.\windows\Set-IOSSocksWindows.ps1`):
 
 ```powershell
-cd P:\all_scripts\iOS-SOCKS-Server-master
+cd P:\all_scripts\iOS-SOCKS-Server
 .\deploy.ps1
 ```
 
