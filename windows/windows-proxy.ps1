@@ -1,13 +1,12 @@
 # Toggle Windows user proxy for iOS-SOCKS-Server (PAC / automatic setup script).
 #
-# Phone IP and ports: ios-socks-windows.json (see Set-IOSSocksWindows.ps1).
+# Updates WinINET registry values AND DefaultConnectionSettings (required for
+# Settings -> Proxy -> "Use setup script" and most apps).
 #
 # Usage (from this folder):
 #   .\windows-proxy.ps1 -Action Status
-#   .\windows-proxy.ps1 -Action On -OpenBrowser
+#   .\windows-proxy.ps1 -Action On
 #   .\windows-proxy.ps1 -Action Off
-#
-# Run socks5.py on the phone first; use the PAC URL from its startup banner.
 
 param(
     [ValidateSet("On", "Off", "Status")]
@@ -15,55 +14,12 @@ param(
     [string] $PhoneIp = "",
     [int] $WpadPort = 0,
     [string] $PacUrl = "",
-    [switch] $OpenBrowser,
     [string] $BackupPath = (Join-Path $env:LOCALAPPDATA "iOS-SOCKS-Server-proxy-backup.json")
 )
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\IOS-Socks-Windows.ps1"
-
-$RegPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
-$RegKeys = @("ProxyEnable", "ProxyServer", "ProxyOverride", "AutoConfigURL")
-
-function Get-ProxyState {
-    $p = Get-ItemProperty -Path $RegPath
-    [pscustomobject]@{
-        ManualEnabled = [bool]$p.ProxyEnable
-        ManualServer  = [string]$p.ProxyServer
-        Bypass        = [string]$p.ProxyOverride
-        PacUrl        = [string]$p.AutoConfigURL
-        BackupFile    = $BackupPath
-        BackupExists  = Test-Path -LiteralPath $BackupPath
-    }
-}
-
-function Save-ProxyBackup {
-    if (Test-Path -LiteralPath $BackupPath) { return }
-    $p = Get-ItemProperty -Path $RegPath
-    $backup = @{}
-    foreach ($key in $RegKeys) { $backup[$key] = $p.$key }
-    $backup | ConvertTo-Json | Set-Content -LiteralPath $BackupPath -Encoding UTF8
-}
-
-function Restore-ProxyBackup {
-    if (-not (Test-Path -LiteralPath $BackupPath)) {
-        Set-ItemProperty -Path $RegPath -Name ProxyEnable -Value 0 -Type DWord
-        Remove-ItemProperty -Path $RegPath -Name AutoConfigURL -ErrorAction SilentlyContinue
-        return
-    }
-    $backup = Get-Content -LiteralPath $BackupPath -Raw | ConvertFrom-Json
-    foreach ($key in $RegKeys) {
-        $val = $backup.$key
-        if ($null -eq $val -or [string]::IsNullOrWhiteSpace([string]$val)) {
-            Remove-ItemProperty -Path $RegPath -Name $key -ErrorAction SilentlyContinue
-        } elseif ($key -eq "ProxyEnable") {
-            Set-ItemProperty -Path $RegPath -Name $key -Value ([int]$val) -Type DWord
-        } else {
-            Set-ItemProperty -Path $RegPath -Name $key -Value ([string]$val)
-        }
-    }
-    Remove-Item -LiteralPath $BackupPath -Force
-}
+. "$PSScriptRoot\WinInet-ProxySettings.ps1"
 
 function Refresh-InternetSettings {
     if (-not ("WinInet.Refresh" -as [type])) {
@@ -76,6 +32,34 @@ public static extern bool InternetSetOption(System.IntPtr hInternet, int dwOptio
     [WinInet.Refresh]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null
 }
 
+function Get-ProxyState {
+    $regPath = Get-WinInetSettingsPath
+    $p = Get-ItemProperty -Path $regPath
+    [pscustomobject]@{
+        ManualEnabled = [bool]$p.ProxyEnable
+        ManualServer  = [string]$p.ProxyServer
+        PacUrl        = [string]$p.AutoConfigURL
+        AutoDetect    = [bool]$p.AutoDetect
+        BackupFile    = $BackupPath
+        BackupExists  = Test-Path -LiteralPath $BackupPath
+    }
+}
+
+function Save-ProxyBackup {
+    if (Test-Path -LiteralPath $BackupPath) { return }
+    Get-WinInetProxyBackupData | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $BackupPath -Encoding UTF8
+}
+
+function Restore-ProxyBackup {
+    if (-not (Test-Path -LiteralPath $BackupPath)) {
+        Clear-WinInetPacProxy
+        return
+    }
+    $backup = Get-Content -LiteralPath $BackupPath -Raw | ConvertFrom-Json
+    Restore-WinInetProxyBackupData -Backup $backup
+    Remove-Item -LiteralPath $BackupPath -Force
+}
+
 function Resolve-PacUrl {
     Get-IOSSocksPacUrl -PhoneHost $PhoneIp -WpadPort $WpadPort -PacUrlOverride $PacUrl
 }
@@ -86,25 +70,25 @@ switch ($Action) {
         Write-Host "Config: $(Get-IOSSocksWindowsConfigPath)"
         Write-Host "  phoneLanHost: $(Get-IOSSocksPhoneHost -Override $PhoneIp)"
         Write-Host "  expected PAC: $(Resolve-PacUrl)"
-        Write-Host "Windows user proxy (current user):"
+        Write-Host "Windows user proxy (WinINET):"
         Write-Host "  PAC (setup script): $($s.PacUrl)"
         Write-Host "  Manual enabled:   $($s.ManualEnabled)"
         if ($s.ManualServer) { Write-Host "  Manual server:    $($s.ManualServer)" }
+        Write-Host "  Auto-detect:      $($s.AutoDetect)"
         if ($s.BackupExists) { Write-Host "  Backup (for Off): $($s.BackupFile)" }
+        if (-not $s.PacUrl -and $s.ManualServer) {
+            Write-Host ""
+            Write-Host 'Note: Manual proxy is set but PAC is empty. Run -Action On for setup script mode.'
+        }
     }
     "On" {
         $url = Resolve-PacUrl
         Save-ProxyBackup
-        Set-ItemProperty -Path $RegPath -Name ProxyEnable -Value 0 -Type DWord
-        Set-ItemProperty -Path $RegPath -Name AutoConfigURL -Value $url
+        Set-WinInetPacProxy -PacUrl $url
         Refresh-InternetSettings
         Write-Host "PAC proxy ON: $url"
+        Write-Host 'Check Settings -> Network and Internet -> Proxy -> Use setup script.'
         Write-Host "Keep Pythonista in the foreground on the phone while tethering."
-        if ($OpenBrowser) {
-            $debugUrl = Get-IOSSocksLanDebugUrl -PhoneHost $PhoneIp
-            Write-Host "Opening $debugUrl"
-            Start-Process $debugUrl
-        }
     }
     "Off" {
         Restore-ProxyBackup

@@ -75,5 +75,5 @@ Write-Host ''
 Show-IOSSocksWindowsDiagnostics
 Write-Host ''
 Write-Host 'Next: run socks5.py on the phone, then:'
-Write-Host '  .\Socks-Proxy-On.cmd   (or .\windows-proxy.ps1 -Action On -OpenBrowser)'
+Write-Host '  .\Socks-Proxy-On.cmd   (or .\windows-proxy.ps1 -Action On)'
 Write-Host '  .\Socks-Proxy-Off.cmd'

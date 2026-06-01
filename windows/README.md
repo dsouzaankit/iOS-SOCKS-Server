@@ -9,8 +9,9 @@ All Windows-side scripts and config live in this folder (same layout as Loop Seg
 | `ios-socks-windows.example.json` | Template — copy to `ios-socks-windows.json` |
 | `ios-socks-windows.json` | **Your** phone IP, ports, iCloud path (gitignored) |
 | `Set-IOSSocksWindows.ps1` | Create or update config (`-Show` for diagnostics) |
-| `windows-proxy.ps1` | Enable/disable PAC proxy from config |
-| `Socks-Proxy-On.cmd` | One-click **ON** (+ opens LAN debug in browser) |
+| `windows-proxy.ps1` | Enable/disable PAC proxy (registry + WinINET connection blob) |
+| `WinInet-ProxySettings.ps1` | Low-level PAC blob writer (dot-sourced) |
+| `Socks-Proxy-On.cmd` | One-click **ON** (PAC proxy from config) |
 | `Socks-Proxy-Off.cmd` | One-click **OFF** (restores prior proxy) |
 | `Install-SocksDailyShortcuts.ps1` | Desktop shortcuts to the `.cmd` pair |
 | `IOS-Socks-Windows.ps1` | Shared config loader (dot-sourced; do not run directly) |
@@ -38,7 +39,7 @@ Pin to the desktop once:
 PowerShell equivalent:
 
 ```powershell
-.\windows-proxy.ps1 -Action On -OpenBrowser
+.\windows-proxy.ps1 -Action On
 .\windows-proxy.ps1 -Action Off
 .\windows-proxy.ps1 -Action Status
 ```

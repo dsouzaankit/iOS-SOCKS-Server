@@ -62,7 +62,7 @@ Set `INSTALL_SHORTCUT_LAUNCHER = False` in `socks5.py` only if you will **not** 
         - **Windows scripts:** everything is under [windows/](windows/README.md) — config, proxy toggle, and one-click `.cmd` files.
         - **Per-PC config:** copy `windows/ios-socks-windows.example.json` → `windows/ios-socks-windows.json`, then `.\windows\Set-IOSSocksWindows.ps1 -PhoneHost <phone-ip>`.
         - **One-click daily pair** (after `socks5.py` is running): `windows\Socks-Proxy-On.cmd` / `windows\Socks-Proxy-Off.cmd`, or `.\windows\Install-SocksDailyShortcuts.ps1` for desktop shortcuts.
-        - **PowerShell:** `cd windows` then `.\windows-proxy.ps1 -Action On -OpenBrowser` / `-Action Off`. Backs up proxy once before **On**; **Off** restores. Per-user only (not `netsh winhttp`).
+        - **PowerShell:** `cd windows` then `.\windows-proxy.ps1 -Action On` / `-Action Off`. Backs up proxy once before **On**; **Off** restores. Per-user only (not `netsh winhttp`).
         - **Classic dialog**: Win+R → `inetcpl.cpl` → **Connections** → **LAN settings** → check **Use automatic configuration script** and enter the same PAC URL. Useful if Settings and legacy apps disagree.
         - Many desktop apps ignore system proxy settings; configure those apps separately or use a tool such as [Proxifier](https://www.proxifier.com/) (paid) if needed.
         - Optional: [SSTap](https://sourceforge.net/projects/sstap/) can force more traffic through a proxy; this project is not affiliated with SSTap and cannot support it.
@@ -111,6 +111,54 @@ On iOS/macOS, **errno 48** means a port the proxy needs is still held by a **pre
 4. Only start the proxy **one way at a time** (either **Run** in Pythonista or the home screen URL, not both in quick succession).
 
 If 48 still appears after a force quit, restart the iPhone (rare stuck listener). If another tool uses the same ports, change `SOCKS_PORT`, `HTTP_PORT`, `WPAD_PORT`, and/or `LAN_DEBUG_PORT` at the top of `socks5.py` and update client proxy/PAC settings to match.
+
+## Error 32: Broken pipe (`BrokenPipeError`, `EPIPE`)
+
+On iOS/macOS/Windows clients talking to the phone proxy, **errno 32** means the **other side closed the TCP connection while your side was still writing**. Python reports this as `BrokenPipeError: [Errno 32] Broken pipe`. It is **not** “the proxy is broken” — it usually means a **normal early disconnect** on that one connection.
+
+**Typical log line**
+
+```text
+http: 10.0.100.48:11552: BrokenPipeError: [Errno 32] Broken pipe
+```
+
+The IP is your PC or device (`10.0.100.48`); the proxy on the phone was forwarding when the client hung up.
+
+**Common causes (usually harmless)**
+
+- Browser or app **closed a tab**, cancelled a request, or finished a **PAC / WPAD** fetch (`/wpad.dat`) and dropped the socket.
+- **`CONNECT` tunnel** ended (user navigated away, HTTP/2 reset, antivirus or proxy inspector cut the connection).
+- Windows **turned proxy on/off** (`Socks-Proxy-Off.cmd`) while connections were still open.
+- Idle tunnel closed by client, server, or middlebox; phone writes one more packet → broken pipe.
+
+Related: **errno 54** (`ECONNRESET`, `Connection reset by peer`) is the same class of client/server hang-up. The HTTP proxy treats both as benign disconnects.
+
+**When you can ignore it**
+
+- Appears **occasionally** in `proxy_latest.txt` or LAN debug.
+- **Browsing and apps still work** through the proxy.
+- No matching **502 Bad Gateway** or “Unable to connect to host” for the site you care about.
+
+Current code logs these at **debug** on the HTTP handler (not as a proxy failure). SOCKS handshake drops are ignored the same way.
+
+**When to investigate**
+
+- **Many** broken pipes per second while pages fail to load.
+- Same time as **502**, DNS errors, or zero traffic on the LAN debug page.
+- Only happens when Pythonista is **backgrounded** or the phone sleeps — see startup banner: keep Pythonista **in the foreground**.
+
+**Remedy (in order)**
+
+1. **Retry the page** — often a one-off cancelled request.
+2. Confirm **`socks5.py` is running** and the PC uses the correct PAC URL / phone IP ([windows/](windows/README.md)).
+3. **Toggle proxy off and on** on Windows (`Socks-Proxy-Off.cmd` then `Socks-Proxy-On.cmd`) after changing settings.
+4. If errors flood and nothing loads: **Stop** proxy (wait for `Shutting down.`), force quit Pythonista if needed, **Run** once — same as [Error 48](#error-48-address-already-in-use).
+5. If one app always fails but others work, that app may not honor system proxy; configure it directly or use a per-app proxy tool.
+
+**Not the same as**
+
+- **[Error 48](#error-48-address-already-in-use)** — port already in use at startup.
+- **WinHTTP / `netsh winhttp`** — separate from WinINET PAC; broken pipe here is on the phone’s HTTP/SOCKS ports (9877 / 9876).
 
 ## Doesn't work with an ad-hoc network on macOS
 
