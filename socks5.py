@@ -46,6 +46,10 @@ LIVE_CONSOLE_REFRESH = False
 # Pythonista: dark UI + prevent auto-lock while the script runs.
 REQUEST_DARK_MODE = True
 KEEP_SCREEN_AWAKE = True
+# Pythonista: stop proxy and quit the app when backgrounded or screen locks.
+EXIT_WHEN_BACKGROUNDED = True
+EXIT_TERMINATE_PYTHONISTA = True
+EXIT_GRACE_SECONDS = 2.0
 # Write "Run SOCKS Proxy.py" beside this folder for the Shortcuts script picker.
 INSTALL_SHORTCUT_LAUNCHER = True
 
@@ -98,6 +102,8 @@ except ImportError:
     print("Warning: dnspython not available; falling back to system DNS")
     resolver = None
 
+initial_output = ""
+
 try:
     # We want the WiFi address so that clients know what IP to use.
     # We want the non-WiFi (cellular?) address so that we can force network
@@ -109,7 +115,6 @@ try:
 
     from lib import ifaddrs
 
-    initial_output = ""
     ipv4_output = ""
     ipv6_output = ""
 
@@ -284,6 +289,19 @@ def run_wpad_server(server):
         pass
 
 
+class RestartProxy(Exception):
+    """In-process restart requested via /restart or control file."""
+
+
+def _poll_control() -> None:
+    from lib.proxy_control import is_restart_requested, is_shutdown_requested
+
+    if is_restart_requested():
+        raise RestartProxy
+    if is_shutdown_requested():
+        raise KeyboardInterrupt
+
+
 if __name__ == "__main__":
     import asyncio
 
@@ -302,114 +320,185 @@ if __name__ == "__main__":
 
     _setup_logging()
 
-    if INSTALL_SHORTCUT_LAUNCHER and "Pythonista" in sys.executable:
-        from lib.shortcut_launcher import (
-            install_shortcuts_launcher,
-            launcher_banner_lines,
-        )
+    if "Pythonista" in sys.executable and EXIT_WHEN_BACKGROUNDED:
+        from lib.ios_lifecycle import install_exit_on_background, schedule_terminate_pythonista
+        from lib.proxy_control import request_shutdown
 
-        _proxy_dir = os.path.dirname(os.path.abspath(__file__))
-        launcher_result = install_shortcuts_launcher(_proxy_dir, quiet=True)
-        initial_output += launcher_banner_lines(launcher_result, _proxy_dir)
+        def _on_background_exit(reason: str) -> None:
+            print("Stopping proxy (%s)." % reason, flush=True)
+            request_shutdown()
+            if EXIT_TERMINATE_PYTHONISTA:
+                schedule_terminate_pythonista(EXIT_GRACE_SECONDS)
 
-    pac_body = make_pac_bytes(PROXY_HOST, HTTP_PORT, SOCKS_PORT)
-    wpad_server = create_wpad_server(
-        LISTEN_HOST, WPAD_PORT, PROXY_HOST, SOCKS_PORT, HTTP_PORT
-    )
-
-    initial_output += "PAC URL: http://{}:{}/wpad.dat\n".format(PROXY_HOST, WPAD_PORT)
-    initial_output += "SOCKS Address: {}:{}\n".format(
-        PROXY_HOST or LISTEN_HOST, SOCKS_PORT
-    )
-    initial_output += "HTTP Proxy Address: {}:{}\n".format(
-        PROXY_HOST or LISTEN_HOST, HTTP_PORT
-    )
-    if "Pythonista" in sys.executable:
-        initial_output += (
-            "Keep Pythonista in the foreground — do not lock the phone or switch apps.\n"
-        )
-    if LAN_DEBUG_ENABLED:
-        initial_output += "Debug log LAN: http://{}:{}/\n".format(
-            PROXY_HOST or LISTEN_HOST, LAN_DEBUG_PORT
-        )
-        initial_output += "  safe mode: python debug_server.py\n"
-
-    if LOG_TO_FILE:
-        from lib.file_logging import log_banner
-
-        log_banner(initial_output)
-
-    stats = StatusMonitor(initial_output)
-    _configure_console_logging(stats)
-
-    thread = threading.Thread(target=run_wpad_server, args=(wpad_server,))
-    thread.daemon = True
-    thread.start()
-
-    async def main():
-        if LAN_DEBUG_ENABLED:
-            from lib.lan_debug_server import start_lan_debug_server_thread
-
-            def _lan_debug_status() -> dict:
-                return {
-                    "connections": stats.num_connections,
-                    "errors": stats.num_errors,
-                    "socksPort": SOCKS_PORT,
-                    "httpPort": HTTP_PORT,
-                }
-
-            start_lan_debug_server_thread(
-                LISTEN_HOST,
-                LAN_DEBUG_PORT,
-                safe_mode=False,
-                status_fn=_lan_debug_status,
+        if not install_exit_on_background(_on_background_exit):
+            print(
+                "Warning: could not install background/lock exit handler.",
+                flush=True,
             )
 
-        server = AsyncProxyServer(
-            AsyncSocks5Handler,
-            listen_hosts=LISTEN_HOST,
-            listen_port=SOCKS_PORT,
-            traffic_stats=stats,
-            resolver=resolver,
-            connect_host_ipv4=CONNECT_HOST_IPV4,
-            connect_host_ipv6=CONNECT_HOST_IPV6,
-            prefer_system_dns=PREFER_SYSTEM_DNS,
-            http_port=HTTP_PORT,
-            pac_body=pac_body,
+    _session_state: dict = {"debug_started": False}
+    _stats_log_handler = None
+    _console_logging_ready = False
+
+    while True:
+        session_output = initial_output
+
+        if INSTALL_SHORTCUT_LAUNCHER and "Pythonista" in sys.executable:
+            from lib.shortcut_launcher import (
+                install_shortcuts_launcher,
+                launcher_banner_lines,
+            )
+
+            _proxy_dir = os.path.dirname(os.path.abspath(__file__))
+            launcher_result = install_shortcuts_launcher(_proxy_dir, quiet=True)
+            session_output += launcher_banner_lines(
+                launcher_result,
+                _proxy_dir,
+                proxy_host=PROXY_HOST or LISTEN_HOST,
+                debug_port=LAN_DEBUG_PORT,
+            )
+
+        pac_body = make_pac_bytes(PROXY_HOST, HTTP_PORT, SOCKS_PORT)
+        wpad_server = create_wpad_server(
+            LISTEN_HOST, WPAD_PORT, PROXY_HOST, SOCKS_PORT, HTTP_PORT
         )
-        asyncio.create_task(server.run())
 
-        server = AsyncProxyServer(
-            AsyncHTTPProxyHandler,
-            listen_hosts=LISTEN_HOST,
-            listen_port=HTTP_PORT,
-            traffic_stats=stats,
-            resolver=resolver,
-            connect_host_ipv4=CONNECT_HOST_IPV4,
-            connect_host_ipv6=CONNECT_HOST_IPV6,
-            prefer_system_dns=PREFER_SYSTEM_DNS,
-            access_log=LIVE_CONSOLE_REFRESH,
-            pac_body=pac_body,
+        session_output += "PAC URL: http://{}:{}/wpad.dat\n".format(
+            PROXY_HOST, WPAD_PORT
         )
-        asyncio.create_task(server.run())
+        session_output += "SOCKS Address: {}:{}\n".format(
+            PROXY_HOST or LISTEN_HOST, SOCKS_PORT
+        )
+        session_output += "HTTP Proxy Address: {}:{}\n".format(
+            PROXY_HOST or LISTEN_HOST, HTTP_PORT
+        )
+        if "Pythonista" in sys.executable:
+            if EXIT_WHEN_BACKGROUNDED:
+                if EXIT_TERMINATE_PYTHONISTA:
+                    session_output += (
+                        "Auto-exit: proxy stops and Pythonista closes when "
+                        "backgrounded or screen locks.\n"
+                    )
+                else:
+                    session_output += (
+                        "Auto-stop: proxy stops when backgrounded or screen locks "
+                        "(Pythonista stays open).\n"
+                    )
+            else:
+                session_output += (
+                    "Keep Pythonista in the foreground — do not lock the phone "
+                    "or switch apps.\n"
+                )
+        if LAN_DEBUG_ENABLED:
+            session_output += "Debug log LAN: http://{}:{}/\n".format(
+                PROXY_HOST or LISTEN_HOST, LAN_DEBUG_PORT
+            )
+            session_output += "  safe mode: python debug_server.py\n"
 
-        if LIVE_CONSOLE_REFRESH:
-            await stats.render_forever()
-        else:
-            stats.display_once()
-            await stats.idle_forever()
-
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        # Pythonista Stop can take up to ~30s while connections close; wait for this line.
-        print("Shutting down.", flush=True)
-        wpad_server.shutdown()
-    except Exception as exc:
-        print("Proxy crashed:", exc, flush=True)
-        traceback.print_exc()
         if LOG_TO_FILE:
-            from lib.file_logging import log_crash
+            from lib.file_logging import log_banner
 
-            log_crash(exc)
-        raise
+            log_banner(session_output)
+
+        stats = StatusMonitor(session_output)
+        root_logger = logging.getLogger()
+        if _stats_log_handler is not None:
+            root_logger.removeHandler(_stats_log_handler)
+        root_logger.addHandler(stats)
+        _stats_log_handler = stats
+        if not _console_logging_ready:
+            if not LIVE_CONSOLE_REFRESH:
+                for handler in list(root_logger.handlers):
+                    if isinstance(handler, logging.StreamHandler) and handler is not stats:
+                        root_logger.removeHandler(handler)
+            _console_logging_ready = True
+
+        from lib.proxy_control import clear_shutdown_request
+
+        clear_shutdown_request()
+
+        thread = threading.Thread(target=run_wpad_server, args=(wpad_server,))
+        thread.daemon = True
+        thread.start()
+
+        async def main():
+            if LAN_DEBUG_ENABLED and not _session_state["debug_started"]:
+                from lib.lan_debug_server import start_lan_debug_server_thread
+
+                def _lan_debug_status() -> dict:
+                    live = _session_state.get("stats")
+                    if live is None:
+                        return {}
+                    return {
+                        "connections": live.num_connections,
+                        "errors": live.num_errors,
+                        "socksPort": SOCKS_PORT,
+                        "httpPort": HTTP_PORT,
+                    }
+
+                start_lan_debug_server_thread(
+                    LISTEN_HOST,
+                    LAN_DEBUG_PORT,
+                    safe_mode=False,
+                    status_fn=_lan_debug_status,
+                )
+                _session_state["debug_started"] = True
+
+            _session_state["stats"] = stats
+
+            server = AsyncProxyServer(
+                AsyncSocks5Handler,
+                listen_hosts=LISTEN_HOST,
+                listen_port=SOCKS_PORT,
+                traffic_stats=stats,
+                resolver=resolver,
+                connect_host_ipv4=CONNECT_HOST_IPV4,
+                connect_host_ipv6=CONNECT_HOST_IPV6,
+                prefer_system_dns=PREFER_SYSTEM_DNS,
+                http_port=HTTP_PORT,
+                pac_body=pac_body,
+            )
+            asyncio.create_task(server.run())
+
+            server = AsyncProxyServer(
+                AsyncHTTPProxyHandler,
+                listen_hosts=LISTEN_HOST,
+                listen_port=HTTP_PORT,
+                traffic_stats=stats,
+                resolver=resolver,
+                connect_host_ipv4=CONNECT_HOST_IPV4,
+                connect_host_ipv6=CONNECT_HOST_IPV6,
+                prefer_system_dns=PREFER_SYSTEM_DNS,
+                access_log=LIVE_CONSOLE_REFRESH,
+                pac_body=pac_body,
+            )
+            asyncio.create_task(server.run())
+
+            if LIVE_CONSOLE_REFRESH:
+                await stats.render_forever(shutdown_check=_poll_control)
+            else:
+                stats.display_once()
+                await stats.idle_forever(shutdown_check=_poll_control)
+
+        try:
+            asyncio.run(main())
+            break
+        except RestartProxy:
+            print("Restarting proxy...", flush=True)
+            clear_shutdown_request()
+            wpad_server.shutdown()
+            _session_state["stats"] = None
+            continue
+        except KeyboardInterrupt:
+            print("Shutting down.", flush=True)
+            clear_shutdown_request()
+            wpad_server.shutdown()
+            break
+        except Exception as exc:
+            print("Proxy crashed:", exc, flush=True)
+            traceback.print_exc()
+            if LOG_TO_FILE:
+                from lib.file_logging import log_crash
+
+                log_crash(exc)
+            raise

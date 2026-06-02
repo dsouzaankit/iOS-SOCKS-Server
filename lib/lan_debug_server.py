@@ -104,6 +104,7 @@ def _minimal_index_html(safe_mode: bool) -> bytes:
         + '<a class="btn" href="/proxy_latest.txt">Latest log</a>'
         + '<a class="btn" href="/proxy_progress.txt">Progress (12 lines)</a>'
         + '<a class="btn" href="/status.json">status.json</a>'
+        + '<a class="btn" href="/restart">Force-restart proxy (LAN)</a>'
         + "</p>"
         + "<h2>Live tail</h2><pre>"
         + _html_escape(log_paths.read_text_file(log_paths.latest_log_path(), "(empty)"))
@@ -172,6 +173,43 @@ async def _serve_request(
 
         if path == "/status.json":
             body = _status_json(safe_mode, status_fn)
+            if method == "HEAD":
+                body = b""
+            writer.write(
+                _http_response(
+                    200,
+                    "OK",
+                    {"Content-Type": "application/json; charset=utf-8"},
+                    body,
+                )
+            )
+            await writer.drain()
+            return
+
+        if path == "/shutdown":
+            try:
+                from .proxy_control import request_shutdown
+
+                request_shutdown()
+            except Exception:
+                pass
+            body = b"shutdown requested\n"
+            if method == "HEAD":
+                body = b""
+            writer.write(
+                _http_response(200, "OK", {"Content-Type": "text/plain"}, body)
+            )
+            await writer.drain()
+            return
+
+        if path == "/restart":
+            try:
+                from .proxy_control import request_restart
+
+                request_restart()
+            except Exception:
+                pass
+            body = json.dumps({"status": "restarting"}).encode("utf-8")
             if method == "HEAD":
                 body = b""
             writer.write(

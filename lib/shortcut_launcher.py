@@ -13,7 +13,8 @@ logger = logging.getLogger("launcher")
 LAUNCHER_NAME = "RunSOCKSProxy.py"
 # Removed duplicate names — deleted from On This iPhone on each install.
 _STALE_LAUNCHER_NAMES = ("Run SOCKS Proxy.py",)
-LAUNCHER_VERSION = 8
+LAUNCHER_VERSION = 11
+DEFAULT_DEBUG_PORT = 8765
 
 _LAUNCHER_TEMPLATE = '''#!/usr/bin/env python3
 """Launch iOS-SOCKS-Server (auto-generated; do not edit)."""
@@ -36,9 +37,28 @@ if __name__ == "__main__":
     if not os.path.isfile(_SOCKS5):
         print("socks5.py not found:", _SOCKS5, flush=True)
         raise SystemExit(1)
+
+    if _PROXY_DIR not in sys.path:
+        sys.path.insert(0, _PROXY_DIR)
+        from lib.proxy_control import any_proxy_port_in_use
+
+        if any_proxy_port_in_use():
+            print(
+                "Proxy already running. Force-restart from LAN (see socks5.py banner).",
+                flush=True,
+            )
+            raise SystemExit(1)
+
     print("Starting proxy from", _SOCKS5, flush=True)
     _run_proxy()
 '''
+
+
+def restart_http_url(
+    host: str = "127.0.0.1", debug_port: int = DEFAULT_DEBUG_PORT
+) -> str:
+    """In-process proxy bounce while socks5.py is running (PC / LAN browser)."""
+    return "http://{}:{}/restart".format(host, debug_port)
 
 
 def _is_pythonista() -> bool:
@@ -46,9 +66,8 @@ def _is_pythonista() -> bool:
 
 
 def _launcher_body(proxy_dir: str) -> str:
-    return (
-        _LAUNCHER_TEMPLATE.replace("{version}", str(LAUNCHER_VERSION))
-        .replace("{proxy_dir!r}", repr(proxy_dir))
+    return _LAUNCHER_TEMPLATE.replace("{version}", str(LAUNCHER_VERSION)).replace(
+        "{proxy_dir!r}", repr(proxy_dir)
     )
 
 
@@ -98,7 +117,7 @@ class LauncherInstallResult:
 
 
 def shortcuts_launcher_run_url() -> str:
-    """pythonista3:// URL for home-screen / Shortcuts Open URL."""
+    """pythonista3:// URL for home-screen cold start."""
     try:
         import shortcuts
 
@@ -108,14 +127,21 @@ def shortcuts_launcher_run_url() -> str:
 
 
 def launcher_banner_lines(
-    result: LauncherInstallResult, proxy_dir: str | None = None
+    result: LauncherInstallResult,
+    proxy_dir: str | None = None,
+    *,
+    proxy_host: str | None = None,
+    debug_port: int = DEFAULT_DEBUG_PORT,
 ) -> str:
     if not result.local_path:
         return "Shortcuts launcher: not installed (On This iPhone)\n"
     proxy_dir = proxy_dir or result.proxy_dir
+    host = proxy_host or "127.0.0.1"
     lines = [
         "Shortcuts: %s on On This iPhone (v%s)" % (LAUNCHER_NAME, LAUNCHER_VERSION),
-        "  Home screen Open URL: %s" % shortcuts_launcher_run_url(),
+        "  Force-restart proxy from LAN: %s"
+        % restart_http_url(host, debug_port),
+        "  Home screen start (cold): %s" % shortcuts_launcher_run_url(),
         "  Project: %s" % proxy_dir,
         "  (Removed duplicate: Run SOCKS Proxy.py)",
     ]

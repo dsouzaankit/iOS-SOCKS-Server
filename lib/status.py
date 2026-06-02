@@ -108,12 +108,16 @@ class StatusMonitor(TrafficStats, logging.Handler):
     def display_once(self) -> None:
         print(self.banner, flush=True)
 
-    async def idle_forever(self) -> None:
+    async def idle_forever(self, shutdown_check=None) -> None:
         while True:
-            await asyncio.sleep(3600)
+            if shutdown_check is not None:
+                shutdown_check()
+            await asyncio.sleep(0.5 if shutdown_check is not None else 3600)
 
-    async def render_forever(self) -> None:
+    async def render_forever(self, shutdown_check=None) -> None:
         while True:
+            if shutdown_check is not None:
+                shutdown_check()
             await asyncio.sleep(self.interval)
 
             # Clear the console

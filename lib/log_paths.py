@@ -12,6 +12,7 @@ LATEST_LOG = "proxy_latest.txt"
 PROGRESS_LOG = "proxy_progress.txt"
 OK_PROBE = "proxy_ok.txt"
 CRASH_MARKER = "proxy_crash.txt"
+CONTROL_FILE = "proxy_control.txt"
 LOG_RETENTION_COUNT = 40
 
 _version = "SOCKS Proxy (Pythonista)"
@@ -47,6 +48,10 @@ def ok_probe_path() -> str:
 
 def crash_marker_path() -> str:
     return os.path.join(log_dir(), CRASH_MARKER)
+
+
+def control_file_path() -> str:
+    return os.path.join(log_dir(), CONTROL_FILE)
 
 
 def ensure_log_dirs() -> str:

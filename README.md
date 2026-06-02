@@ -6,7 +6,7 @@ A simple HTTP/SOCKS proxy designed to run on Pythonista on iOS, letting you fake
 
 This project is a **fork** of [nneonneo/iOS-SOCKS-Server](https://github.com/nneonneo/iOS-SOCKS-Server) ([@nneonneo](https://github.com/nneonneo)). The original `socks5.py` credits [@philrosenthal](https://github.com/philrosenthal) for the statistics view and IPv6 support.
 
-**Fork changes (dsouzaankit):** iOS Shortcuts / `RunSOCKSProxy.py` launcher, LAN file logging and debug server, quiet console mode, Pythonista dark UI / keep-awake helpers, Windows folder (`windows/`) with per-PC config, one-click proxy on/off, `deploy.ps1`, and expanded README.
+**Fork changes (dsouzaankit):** iOS Shortcuts launcher, auto-exit on background/lock, LAN `/restart`, file logging and debug server, Windows proxy tooling, `deploy.ps1`. See [CHANGELOG.md](CHANGELOG.md).
 
 To compare with upstream: `git fetch upstream` then `git log upstream/master..HEAD`.
 
@@ -23,15 +23,28 @@ To compare with upstream: `git fetch upstream` then `git log upstream/master..HE
 
 Your project in **Files → iCloud → Downloads** is **not** in Pythonista’s script library. Pythonista can only **run** scripts under **On This iPhone** (or its in-app iCloud library), not arbitrary Files paths.
 
-**`RunSOCKSProxy.py`** is a tiny stub on **On This iPhone** that starts the real **`socks5.py`** using the absolute project path baked in when you run the proxy. You still need that file for a home-screen shortcut — **Open URL** is just *how* you launch it; the URL is `pythonista3://RunSOCKSProxy.py?action=run`, not a path to `socks5.py` in Downloads.
+**`RunSOCKSProxy.py`** is a tiny stub on **On This iPhone** that starts the real **`socks5.py`** using the absolute project path baked in when you run the proxy. You still need that file for a **cold start** from the home screen — **Open URL** is just *how* you launch it (`pythonista3://RunSOCKSProxy.py?action=run`).
 
 What **Open URL** replaces: the **Run Pythonista Script** shortcut action and the old duplicate **`Run SOCKS Proxy.py`** name. It does **not** replace **`RunSOCKSProxy.py`**.
 
-### Home screen Open URL (recommended)
+### Home screen Open URL (cold start)
 
-1. Run **`socks5.py`** once in Pythonista — installs/refreshes **`RunSOCKSProxy.py`** and prints the **Open URL** in the banner.
-2. Shortcuts → **Open URL** → paste → **Add to Home Screen**.
+1. Run **`socks5.py`** once in Pythonista — installs/refreshes **`RunSOCKSProxy.py`** and prints URLs in the banner.
+2. Shortcuts → **Open URL** → paste **Home screen start (cold)** from the banner: `pythonista3://RunSOCKSProxy.py?action=run` → **Add to Home Screen**.
 3. Do **not** point the URL at `icloud/Downloads/.../socks5.py` (Pythonista will not find it).
+
+With **`EXIT_WHEN_BACKGROUNDED`** enabled (default), leaving Pythonista or locking the screen stops the proxy and quits the app. Use the home-screen URL when you want to start tethering again — not while `socks5.py` is already running (Pythonista will not launch a second script).
+
+### Force-restart from LAN (proxy already running)
+
+While **`socks5.py` is running** and Pythonista is in the foreground, bounce the proxy without stopping the app:
+
+- **From a PC on the same Wi‑Fi:** open `http://<phone-ip>:8765/restart` in a browser, or `curl http://<phone-ip>:8765/restart` (IP and URL are in the Pythonista banner and on the LAN debug page at port **8765**).
+- **On the phone:** `http://127.0.0.1:8765/restart` works in Safari/Shortcuts while the proxy is active.
+
+The console should print **`Restarting proxy...`**. Use this when clients are stuck or you changed settings — not for the normal “I switched apps” case (auto-exit handles that).
+
+Do **not** use `pythonista3://...?action=run` with `argv=--restart`; it does not run while a script is already active.
 
 ### Run Pythonista Script (optional)
 
@@ -70,6 +83,27 @@ Set `INSTALL_SHORTCUT_LAUNCHER = False` in `socks5.py` only if you will **not** 
     - For Android: open Settings, Wi-Fi, select your network, expand the Advanced Settings, change the proxy setting to Manual, and enter the host and port for the *HTTP proxy*. Note that SOCKS proxy support on Android is limited, even when using the PAC URL, so the HTTP proxy is recommended.
         - Many applications on Android do not respect proxy settings, unfortunately, and in those cases you will have to configure the apps manually or use an app like Proxifier to force apps to use the proxy.
 
+### Auto-exit when backgrounded or screen locks (Pythonista)
+
+By default, `socks5.py` sets **`EXIT_WHEN_BACKGROUNDED = True`**. When you leave Pythonista (home / app switcher) or the device locks, the proxy requests shutdown and, if **`EXIT_TERMINATE_PYTHONISTA = True`**, suspends and exits Pythonista after **`EXIT_GRACE_SECONDS`** (default 2s). That releases ports without leaving a zombie proxy in the background.
+
+iOS does **not** let Shortcuts or another app force-kill Pythonista; this is **self-terminate** from inside the running script via UIKit notifications.
+
+To keep the proxy running in the background (old behavior), set in `socks5.py`:
+
+```python
+EXIT_WHEN_BACKGROUNDED = False
+```
+
+To stop the proxy but leave Pythonista open:
+
+```python
+EXIT_WHEN_BACKGROUNDED = True
+EXIT_TERMINATE_PYTHONISTA = False
+```
+
+`KEEP_SCREEN_AWAKE = True` still prevents auto-lock while you are in Pythonista; manual lock or switching apps still triggers exit when auto-exit is enabled.
+
 ## Stopping on Pythonista
 
 Tapping **Stop** in Pythonista usually works, but shutdown is **slow — often up to ~30 seconds** with active connections. The script must unwind proxy tunnels, the WPAD thread, and the asyncio event loop; until then the console may look stuck and ports **9876/9877/8088** can stay open briefly.
@@ -106,7 +140,7 @@ On iOS/macOS, **errno 48** means a port the proxy needs is still held by a **pre
 **Fix (in order)**
 
 1. In Pythonista, tap **Stop** on `socks5.py` and wait until the console prints **`Shutting down.`** (up to ~30s). Then tap **Run** once.
-2. If the error persists or there is no `Shutting down.` line, **force quit Pythonista** (app switcher → swipe away), reopen, and run **`socks5.py`** once — do not use the home screen shortcut until the proxy is up.
+2. If the error persists or there is no `Shutting down.` line, **force quit Pythonista** (app switcher → swipe away), reopen, and run **`socks5.py`** once — or use the home-screen **cold start** shortcut.
 3. Before redeploying from a PC, force quit Pythonista so ports and log files are released (see [Deploy workflow](#deploy-workflow-pc--iphone-via-icloud)).
 4. Only start the proxy **one way at a time** (either **Run** in Pythonista or the home screen URL, not both in quick succession).
 
@@ -151,7 +185,7 @@ Current code logs these at **debug** on the HTTP handler (not as a proxy failure
 
 - **Many** broken pipes per second while pages fail to load.
 - Same time as **502**, DNS errors, or zero traffic on the LAN debug page.
-- Only happens when Pythonista is **backgrounded** or the phone sleeps — see startup banner: keep Pythonista **in the foreground**.
+- Only happens when Pythonista is **backgrounded** or the phone sleeps — enable auto-exit (default) or keep Pythonista **in the foreground** (`EXIT_WHEN_BACKGROUNDED = False`).
 
 **Remedy (in order)**
 
