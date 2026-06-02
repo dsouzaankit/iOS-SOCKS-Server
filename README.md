@@ -6,7 +6,7 @@ A simple HTTP/SOCKS proxy designed to run on Pythonista on iOS, letting you fake
 
 This project is a **fork** of [nneonneo/iOS-SOCKS-Server](https://github.com/nneonneo/iOS-SOCKS-Server) ([@nneonneo](https://github.com/nneonneo)). The original `socks5.py` credits [@philrosenthal](https://github.com/philrosenthal) for the statistics view and IPv6 support.
 
-**Fork changes (dsouzaankit):** iOS Shortcuts launcher, auto-exit on background/lock, LAN `/restart`, file logging and debug server, Windows proxy tooling, `deploy.ps1`. See [CHANGELOG.md](CHANGELOG.md).
+**Fork changes (dsouzaankit):** iOS Shortcuts launcher, auto-exit on background/lock, touch-input shield, LAN `/restart`, file logging and debug server, Windows proxy tooling, `deploy.ps1`. See [CHANGELOG.md](CHANGELOG.md).
 
 To compare with upstream: `git fetch upstream` then `git log upstream/master..HEAD`.
 
@@ -104,9 +104,31 @@ EXIT_TERMINATE_PYTHONISTA = False
 
 `KEEP_SCREEN_AWAKE = True` still prevents auto-lock while you are in Pythonista; manual lock or switching apps still triggers exit when auto-exit is enabled.
 
+### Block touch input (Pythonista)
+
+By default, **`BLOCK_TOUCH_INPUT = True`**. While the proxy runs, a transparent **UIKit overlay** (via `objc_util` in `lib/ios_ui.py` — not the Pythonista `ui` module) sits on top of each window and **absorbs accidental taps**. You do not need to interact with Pythonista during tethering.
+
+| With touch block on | Effect |
+|---------------------|--------|
+| Taps on the console / editor | Ignored |
+| Pythonista **Stop** button | Unusable — use auto-exit, LAN `/restart`, or force-quit |
+| Home / app switcher | Still works (system gestures) |
+
+To stop while touch is blocked: switch away or lock the screen (**auto-exit**), hit **`http://<phone-ip>:8765/restart`** from a PC, or swipe Pythonista away in the app switcher.
+
+To use **Stop** or edit scripts while the proxy runs:
+
+```python
+BLOCK_TOUCH_INPUT = False
+```
+
+Touch input is restored automatically when the script shuts down cleanly; it stays blocked across in-process LAN `/restart`.
+
 ## Stopping on Pythonista
 
-Tapping **Stop** in Pythonista usually works, but shutdown is **slow — often up to ~30 seconds** with active connections. The script must unwind proxy tunnels, the WPAD thread, and the asyncio event loop; until then the console may look stuck and ports **9876/9877/8088** can stay open briefly.
+With **`BLOCK_TOUCH_INPUT = True`** (default), the in-app **Stop** button does not receive taps. Use **auto-exit** (leave the app or lock the screen), **LAN** `/restart` or force-quit, or set `BLOCK_TOUCH_INPUT = False`.
+
+Otherwise, tapping **Stop** in Pythonista usually works, but shutdown is **slow — often up to ~30 seconds** with active connections. The script must unwind proxy tunnels, the WPAD thread, and the asyncio event loop; until then the console may look stuck and ports **9876/9877/8088** can stay open briefly.
 
 - **Wait for `Shutting down.` in the console** before you tap **Run** again. That line means the `KeyboardInterrupt` handler finished and it is safe to restart.
 - If Stop seems hung, give it **up to ~30 seconds** while clients disconnect.

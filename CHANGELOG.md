@@ -5,6 +5,7 @@
 ### iOS lifecycle and restart
 
 - **Auto-exit on background / screen lock** (`EXIT_WHEN_BACKGROUNDED`, `EXIT_TERMINATE_PYTHONISTA`, `EXIT_GRACE_SECONDS` in `socks5.py`): registers UIKit notifications via `lib/ios_lifecycle.py`, requests proxy shutdown, then suspends and exits Pythonista after a short grace period. Releases ports when you leave the app or lock the device without a stuck background proxy.
+- **Block touch input** (`BLOCK_TOUCH_INPUT` in `socks5.py`): transparent UIKit overlay via `lib/ios_ui.py` absorbs taps while the proxy runs; in-app Stop is disabled unless set to `False`.
 - **In-process restart** (`GET http://<phone-ip>:8765/restart`): bounces SOCKS/HTTP/WPAD listeners while `socks5.py` keeps running; for stuck clients or settings changes from a PC on the same LAN (or `127.0.0.1` on the phone).
 - **Control file + `/shutdown`** on the LAN debug server for coordinated stop.
 

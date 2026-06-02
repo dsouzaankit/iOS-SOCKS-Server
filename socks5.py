@@ -46,6 +46,8 @@ LIVE_CONSOLE_REFRESH = False
 # Pythonista: dark UI + prevent auto-lock while the script runs.
 REQUEST_DARK_MODE = True
 KEEP_SCREEN_AWAKE = True
+# Pythonista: transparent overlay blocks accidental taps (Stop UI also blocked; use auto-exit or LAN /restart).
+BLOCK_TOUCH_INPUT = True
 # Pythonista: stop proxy and quit the app when backgrounded or screen locks.
 EXIT_WHEN_BACKGROUNDED = True
 EXIT_TERMINATE_PYTHONISTA = True
@@ -55,12 +57,14 @@ INSTALL_SHORTCUT_LAUNCHER = True
 
 if "Pythonista" in sys.executable:
     try:
-        from lib.ios_ui import keep_screen_awake, request_dark_mode
+        from lib.ios_ui import block_touch_input, keep_screen_awake, request_dark_mode
 
         if REQUEST_DARK_MODE:
             request_dark_mode()
         if KEEP_SCREEN_AWAKE:
             keep_screen_awake(True)
+        if BLOCK_TOUCH_INPUT:
+            block_touch_input(True)
     except Exception:
         pass
 
@@ -299,6 +303,17 @@ def _cleanup_proxy_session(wpad_server, wpad_thread) -> None:
         )
 
 
+def _restore_ios_ui() -> None:
+    if "Pythonista" not in sys.executable or not BLOCK_TOUCH_INPUT:
+        return
+    try:
+        from lib.ios_ui import restore_touch_input
+
+        restore_touch_input()
+    except Exception:
+        pass
+
+
 def run_wpad_server(server):
     try:
         server.serve_forever()
@@ -406,6 +421,11 @@ if __name__ == "__main__":
                     "Keep Pythonista in the foreground — do not lock the phone "
                     "or switch apps.\n"
                 )
+            if BLOCK_TOUCH_INPUT:
+                session_output += (
+                    "Touch input blocked — use auto-exit, LAN /restart, or force-quit "
+                    "to stop (in-app Stop is disabled).\n"
+                )
         if LAN_DEBUG_ENABLED:
             session_output += "Debug log LAN: http://{}:{}/\n".format(
                 PROXY_HOST or LISTEN_HOST, LAN_DEBUG_PORT
@@ -507,6 +527,7 @@ if __name__ == "__main__":
         try:
             asyncio.run(main())
             _cleanup_proxy_session(wpad_server, wpad_thread)
+            _restore_ios_ui()
             break
         except RestartProxy:
             print("Restarting proxy...", flush=True)
@@ -518,8 +539,10 @@ if __name__ == "__main__":
             print("Shutting down.", flush=True)
             clear_shutdown_request()
             _cleanup_proxy_session(wpad_server, wpad_thread)
+            _restore_ios_ui()
             break
         except Exception as exc:
+            _restore_ios_ui()
             print("Proxy crashed:", exc, flush=True)
             traceback.print_exc()
             if LOG_TO_FILE:
