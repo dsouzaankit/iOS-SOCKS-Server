@@ -1,5 +1,6 @@
 """WPAD / PAC file server."""
 
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from .quiet_http import NoAccessLogMixin
@@ -45,3 +46,17 @@ def create_wpad_server(
 
     HTTPServer.allow_reuse_address = True
     return HTTPServer((hhost, hport), HTTPHandler)
+
+
+def stop_wpad_server(server: HTTPServer, thread: threading.Thread | None = None, timeout: float = 5.0) -> None:
+    """Stop serve_forever and release the listen socket (needed before in-process restart)."""
+    try:
+        server.shutdown()
+    except Exception:
+        pass
+    try:
+        server.server_close()
+    except Exception:
+        pass
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=timeout)

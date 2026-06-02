@@ -16,6 +16,7 @@
 
 ### Fixes
 
+- **LAN `/restart`:** close WPAD (`shutdown` + `server_close` + thread join), cancel and close asyncio SOCKS/HTTP servers, wait for ports before rebinding — fixes **errno 48** on in-process restart.
 - `initial_output = ""` before interface detection so startup does not crash with `NameError` when `ifaddrs` fails.
 - `ios_lifecycle` observer handler: no return-type annotation (Pythonista `objc_util` / `inspect.getargspec` incompatibility).
 - Port-in-use check uses `connect_ex` instead of `bind` for reliability.

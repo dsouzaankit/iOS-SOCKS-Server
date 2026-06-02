@@ -277,9 +277,26 @@ def _configure_console_logging(stats: StatusMonitor) -> None:
 
 
 def create_wpad_server(hhost, hport, phost, socks_port, http_port):
-    from lib.wpad import create_wpad_server as _create
+    from lib.wpad import create_wpad_server as _create, stop_wpad_server as _stop
 
     return _create(hhost, hport, phost, socks_port, http_port)
+
+
+def stop_wpad_server(server, thread=None, timeout=5.0):
+    from lib.wpad import stop_wpad_server as _stop
+
+    _stop(server, thread, timeout)
+
+
+def _cleanup_proxy_session(wpad_server, wpad_thread) -> None:
+    from lib.proxy_control import wait_for_ports_free
+
+    stop_wpad_server(wpad_server, wpad_thread)
+    if not wait_for_ports_free(timeout=5.0):
+        print(
+            "Warning: proxy ports still in use after stop; restart may fail.",
+            flush=True,
+        )
 
 
 def run_wpad_server(server):
@@ -417,9 +434,11 @@ if __name__ == "__main__":
 
         clear_shutdown_request()
 
-        thread = threading.Thread(target=run_wpad_server, args=(wpad_server,))
-        thread.daemon = True
-        thread.start()
+        wpad_thread = threading.Thread(
+            target=run_wpad_server, args=(wpad_server,), name="wpad"
+        )
+        wpad_thread.daemon = True
+        wpad_thread.start()
 
         async def main():
             if LAN_DEBUG_ENABLED and not _session_state["debug_started"]:
@@ -446,7 +465,7 @@ if __name__ == "__main__":
 
             _session_state["stats"] = stats
 
-            server = AsyncProxyServer(
+            socks_srv = AsyncProxyServer(
                 AsyncSocks5Handler,
                 listen_hosts=LISTEN_HOST,
                 listen_port=SOCKS_PORT,
@@ -458,9 +477,7 @@ if __name__ == "__main__":
                 http_port=HTTP_PORT,
                 pac_body=pac_body,
             )
-            asyncio.create_task(server.run())
-
-            server = AsyncProxyServer(
+            http_srv = AsyncProxyServer(
                 AsyncHTTPProxyHandler,
                 listen_hosts=LISTEN_HOST,
                 listen_port=HTTP_PORT,
@@ -472,27 +489,35 @@ if __name__ == "__main__":
                 access_log=LIVE_CONSOLE_REFRESH,
                 pac_body=pac_body,
             )
-            asyncio.create_task(server.run())
-
-            if LIVE_CONSOLE_REFRESH:
-                await stats.render_forever(shutdown_check=_poll_control)
-            else:
-                stats.display_once()
-                await stats.idle_forever(shutdown_check=_poll_control)
+            socks_task = asyncio.create_task(socks_srv.run())
+            http_task = asyncio.create_task(http_srv.run())
+            try:
+                if LIVE_CONSOLE_REFRESH:
+                    await stats.render_forever(shutdown_check=_poll_control)
+                else:
+                    stats.display_once()
+                    await stats.idle_forever(shutdown_check=_poll_control)
+            finally:
+                for task in (socks_task, http_task):
+                    task.cancel()
+                await asyncio.gather(socks_task, http_task, return_exceptions=True)
+                await socks_srv.close()
+                await http_srv.close()
 
         try:
             asyncio.run(main())
+            _cleanup_proxy_session(wpad_server, wpad_thread)
             break
         except RestartProxy:
             print("Restarting proxy...", flush=True)
             clear_shutdown_request()
-            wpad_server.shutdown()
+            _cleanup_proxy_session(wpad_server, wpad_thread)
             _session_state["stats"] = None
             continue
         except KeyboardInterrupt:
             print("Shutting down.", flush=True)
             clear_shutdown_request()
-            wpad_server.shutdown()
+            _cleanup_proxy_session(wpad_server, wpad_thread)
             break
         except Exception as exc:
             print("Proxy crashed:", exc, flush=True)

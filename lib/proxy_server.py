@@ -139,6 +139,7 @@ class AsyncProxyServer:
         else:
             self.resolver = None
         self.resolver_source: str | None = None
+        self._async_server: asyncio.Server | None = None
         if (
             not self.prefer_system_dns
             and self.resolver is not None
@@ -191,13 +192,21 @@ class AsyncProxyServer:
         return Exception(msg)
 
     async def run(self) -> None:
-        server = await asyncio.start_server(
+        self._async_server = await asyncio.start_server(
             self.client_connected,
             host=self.listen_hosts,
             port=self.listen_port,
             reuse_address=True,
         )
-        await server.serve_forever()
+        await self._async_server.serve_forever()
+
+    async def close(self) -> None:
+        server = self._async_server
+        if server is None:
+            return
+        server.close()
+        await server.wait_closed()
+        self._async_server = None
 
     async def client_connected(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
